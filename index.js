@@ -8,6 +8,7 @@ const {
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode'); // QR string -> PNG data URL (web UI QR tab ke liye)
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -22,6 +23,8 @@ const log = pino({ level: 'silent' });
 // ---------------- web UI state ----------------
 let isConnected = false;   // WhatsApp socket connected?
 let currentSock = null;    // live Baileys socket (pairing API isi ko use karega)
+let latestQR = null;       // Baileys se aaya latest QR string (web UI QR tab ke liye)
+let latestQRAt = 0;        // QR kab aaya (ms timestamp)
 const bootTime = Date.now();
 
 const maskNum = (n = '') => {
@@ -244,6 +247,7 @@ async function startSock() {
   sock.ev.on('connection.update', async (u) => {
     const { connection, lastDisconnect } = u;
     isConnected = connection === 'open';
+    if (u.qr) { latestQR = u.qr; latestQRAt = Date.now(); } // web UI QR tab ke liye save
     if (connection === 'open') {
       console.log(`✅ Bot connected! (${sock.user?.id})`);
       console.log(`📜 ${allCommands.length} commands live — prefix "${config.prefix}"`);
@@ -333,6 +337,11 @@ button.ghost{background:#22222a;color:#ffd54a;border:1px solid #3a3a45;margin-to
 .stat .v{font-size:20px;font-weight:800;color:#ffd54a}
 .stat .k{font-size:11.5px;color:#9a9aa5;margin-top:3px}
 .foot{text-align:center;color:#55555f;font-size:11.5px;margin-top:18px}
+.tabs{display:flex;gap:8px;margin:14px 0 4px}
+.tab{flex:1;margin-top:0;padding:11px;background:#22222a;color:#b9b9c4;border:1px solid #33333d;font-size:14px;font-weight:700}
+.tab.active{background:linear-gradient(90deg,#ffd54a,#ff8f00);color:#1a1a1a;border:none}
+.qrbox{text-align:center;margin-top:16px;padding:18px 12px;border:1px dashed #ffd54a;border-radius:14px;background:rgba(255,213,74,.06)}
+.qrbox img{width:240px;height:240px;border-radius:10px;background:#fff;padding:8px}
 `;
 
 function pairingPage() {
@@ -342,6 +351,11 @@ function pairingPage() {
 <div class="card">
   <div class="brand"><h1>🤖 VIP MMD Bot</h1><p>WhatsApp se connect karo — 2 minute me live!</p></div>
   <div style="text-align:center"><span class="status off">● Bot abhi connected nahi hai</span></div>
+  <div class="tabs">
+    <button class="tab active" id="tab-code" onclick="showTab('code')">🔑 Pairing Code</button>
+    <button class="tab" id="tab-qr" onclick="showTab('qr')">📷 QR Code</button>
+  </div>
+  <div id="pane-code">
   <label>WhatsApp number (country code ke saath, bina +)</label>
   <input id="num" inputmode="numeric" value="${num}" placeholder="9779714313486">
   <button id="go" onclick="getCode()">🔑 Pairing Code Lao</button>
@@ -352,6 +366,20 @@ function pairingPage() {
     <div class="timer"><i id="bar"></i></div>
     <div class="tleft"><span id="tleft">60</span> second bache hain</div>
     <button class="ghost" id="retry" onclick="getCode()">🔄 Dobara code mangao</button>
+  </div>
+  </div>
+  <div id="pane-qr" style="display:none">
+    <div class="qrbox">
+      <img id="qrimg" style="display:none" alt="WhatsApp QR code">
+      <div class="tleft" id="qrmsg">QR load ho raha hai...</div>
+      <button class="ghost" onclick="loadQR()">🔄 Naya QR lao</button>
+    </div>
+    <div class="steps" style="margin-top:14px">
+      <b>📷 QR se connect karo:</b><br>
+      1️⃣ WhatsApp kholo → <b>Linked devices</b><br>
+      2️⃣ <b>Link a device</b> → QR scan karo ✅<br>
+      <span style="color:#9a9aa5;font-size:12px">QR har ~20 second me badalta hai — jaldi scan karo!</span>
+    </div>
   </div>
   <div class="steps">
     <b>📱 Code milne ke baad:</b><br>
@@ -392,6 +420,23 @@ function startCountdown(sec){
     tl.textContent=left; bar.style.width=(left/sec*100)+'%';
   },1000);
 }
+function showTab(w){
+  var pc=document.getElementById('pane-code'), pq=document.getElementById('pane-qr');
+  var tc=document.getElementById('tab-code'), tq=document.getElementById('tab-qr');
+  if(w==='qr'){ pc.style.display='none'; pq.style.display='block'; tc.classList.remove('active'); tq.classList.add('active'); loadQR(); startQRPoll(); }
+  else { pq.style.display='none'; pc.style.display='block'; tq.classList.remove('active'); tc.classList.add('active'); stopQRPoll(); }
+}
+var qrPoll=null;
+function startQRPoll(){ stopQRPoll(); qrPoll=setInterval(function(){ var pq=document.getElementById('pane-qr'); if(pq && pq.style.display!=='none') loadQR(true); },5000); }
+function stopQRPoll(){ if(qrPoll){ clearInterval(qrPoll); qrPoll=null; } }
+function loadQR(silent){
+  var img=document.getElementById('qrimg'), msg=document.getElementById('qrmsg');
+  fetch('/api/qr').then(function(r){ return r.json().then(function(j){ return {s:r.status,j:j}; }); })
+  .then(function(r){
+    if(r.s===200 && r.j.qr){ img.src=r.j.qr; img.style.display='inline-block'; msg.textContent='Scan karo — QR har ~20s me refresh hota hai'; }
+    else if(!silent){ msg.textContent='⚠️ '+(r.j.error||'QR nahi mila'); }
+  }).catch(function(){ if(!silent) msg.textContent='⚠️ Server se baat nahi ho payi'; });
+}
 </script></body></html>`;
 }
 
@@ -417,6 +462,19 @@ app.get('/', (req, res) => {
 });
 
 app.get('/health', (req, res) => res.status(200).send('OK'));
+
+// QR code as PNG data URL (pairing page ka QR tab) — har ~20s me naya QR aata hai
+app.get('/api/qr', async (req, res) => {
+  try {
+    if (isConnected) return res.status(409).json({ error: 'Bot pehle se connected hai! 🎉' });
+    if (!latestQR || Date.now() - latestQRAt > 90000)
+      return res.status(404).json({ error: 'QR abhi taiyaar nahi — 5 second ruk ke retry karo.' });
+    const dataUrl = await QRCode.toDataURL(latestQR, { width: 280, margin: 1 });
+    return res.json({ qr: dataUrl });
+  } catch (e) {
+    return res.status(500).json({ error: 'QR ban nahi paya.' });
+  }
+});
 
 app.post('/api/pair', async (req, res) => {
   try {
