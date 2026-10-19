@@ -20,11 +20,18 @@ const { toStickerBuffer } = require('./lib/sticker');
 
 const log = pino({ level: 'silent' });
 
+// Process ko chhoti-moti galtiyon par marne mat do — log karo aur zinda raho.
+// (Render "Application exited early" bhejta hai jab process exit hota hai.)
+process.on('unhandledRejection', (e) => console.log('⚠️ unhandledRejection:', e?.message || e));
+process.on('uncaughtException', (e) => console.log('⚠️ uncaughtException:', e?.message || e));
+
 // ---------------- web UI state ----------------
 let isConnected = false;   // WhatsApp socket connected?
 let currentSock = null;    // live Baileys socket (pairing API isi ko use karega)
 let latestQR = null;       // Baileys se aaya latest QR string (web UI QR tab ke liye)
 let latestQRAt = 0;        // QR kab aaya (ms timestamp)
+let welcomed = false;      // 'open' par owner ko welcome msg sirf ek baar
+const seenMsgIds = new Set(); // loop/duplicate protection (har message ID ek baar)
 const bootTime = Date.now();
 
 const maskNum = (n = '') => {
@@ -102,7 +109,16 @@ const senderNum = (sender) => normJid(sender).split('@')[0].replace(/\D/g, '');
 // ---------------- per-message handler ----------------
 async function handleOne(sock, msg) {
   try {
-    if (!msg.message || msg.key.fromMe) return;
+    if (!msg.message) return;
+    // NOTE: fromMe messages BHI process hote hain — bot owner ke APNE number par chalta hai
+    // (self-bot mode), to owner apne phone se hi commands bhejta hai. Loop se bachne ke liye:
+    // (a) sirf prefix "." wale messages dispatch hote hain, (b) har message ID ek baar (seenMsgIds).
+    const mid = msg.key.id;
+    if (mid) {
+      if (seenMsgIds.has(mid)) return;
+      seenMsgIds.add(mid);
+      if (seenMsgIds.size > 300) seenMsgIds.delete(seenMsgIds.values().next().value);
+    }
     const chatId = msg.key.remoteJid;
     if (!chatId || chatId === 'status@broadcast') return;
 
@@ -221,6 +237,20 @@ async function startSock() {
   });
   currentSock = sock; // web UI ke /api/pair ke liye
 
+  // Bot ke khud ke bheje messages ko dobara process mat karo (self-bot loop protection):
+  // har outbound message ka ID seenMsgIds me daal do, echo aane par skip ho jayega.
+  const _sendMessage = sock.sendMessage.bind(sock);
+  sock.sendMessage = async (...args) => {
+    const sent = await _sendMessage(...args);
+    try {
+      if (sent?.key?.id) {
+        seenMsgIds.add(sent.key.id);
+        if (seenMsgIds.size > 300) seenMsgIds.delete(seenMsgIds.values().next().value);
+      }
+    } catch {}
+    return sent;
+  };
+
   // Pairing-code flow (pehli baar): QR fallback
   if (!state.creds.registered) {
     const phone = config.pairingNumber.replace(/\D/g, '');
@@ -251,17 +281,36 @@ async function startSock() {
     if (connection === 'open') {
       console.log(`✅ Bot connected! (${sock.user?.id})`);
       console.log(`📜 ${allCommands.length} commands live — prefix "${config.prefix}"`);
+      // Pehli baar connect hone par owner ke number par confirmation bhejo
+      if (!welcomed) {
+        welcomed = true;
+        const oj = ownerNum() + '@s.whatsapp.net';
+        const txt =
+          `🤖 *VIP MMD Bot live ho gaya!* ✅\n\n` +
+          `Tumhara number ab bot se connected hai. Ab tum commands use kar sakte ho:\n\n` +
+          `• \`${config.prefix}menu\` — saare ${allCommands.length} commands ki list\n` +
+          `• \`${config.prefix}ping\` — bot online check\n` +
+          `• \`${config.prefix}dl <link>\` — video download (TikTok / IG / X / FB / YT...)\n` +
+          `• \`${config.prefix}mp3 <link>\` — sirf audio\n` +
+          `• \`${config.prefix}sticker\` — photo ka sticker\n` +
+          `• \`${config.prefix}tagall\` — group me sabko tag\n\n` +
+          `Prefix \`${config.prefix}\` mat bhoolna!\nMade for VIP Shorts Creator 🎬`;
+        sock.sendMessage(oj, { text: txt }).catch(() => console.log('welcome msg nahi gaya'));
+      }
     }
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
       if (code === DisconnectReason.loggedOut) {
-        console.log('❌ Logged out. Session saaf kar raha hoon — dobara pair karo:');
-        fs.rmSync(path.join(__dirname, config.sessionDir), { recursive: true, force: true });
-        console.log('   node index.js chalao aur naya pairing code daalo.');
-        process.exit(0);
+        // Session khatam — saaf karo aur naye socket se dobara pairing ke liye taiyaar raho.
+        // process.exit NAHI karenge (Render "exited early" mail bhejta hai) — pairing page se dobara pair ho jayega.
+        console.log('❌ Logged out. Session saaf kar raha hoon — pairing page kholo aur dobara pair karo.');
+        try { fs.rmSync(path.join(__dirname, config.sessionDir), { recursive: true, force: true }); } catch {}
+        latestQR = null; latestQRAt = 0;
+        setTimeout(() => startSock().catch((e) => console.log('re-pair start fail:', e.message)), 3000);
+        return;
       }
-      console.log('🔄 Connection toot gaya — reconnect ho raha hai...');
-      setTimeout(startSock, 3000);
+      console.log('🔄 Connection toot gaya — 3s me reconnect...');
+      setTimeout(() => startSock().catch((e) => console.log('reconnect fail:', e.message, '— agla retry 10s me')), 3000);
     }
   });
 
@@ -288,10 +337,14 @@ async function startSock() {
 }
 
 console.log('🤖 VIP MMD Bot start ho raha hai...');
-startSock().catch((e) => {
-  console.log('❌ Start fail:', e.message);
-  process.exit(1);
-});
+function boot() {
+  startSock().catch((e) => {
+    // Pehli baar start fail ho to exit mat karo — retry karo (Render mail nahi bhejega)
+    console.log('❌ Start fail:', e.message, '— 10s me retry...');
+    setTimeout(boot, 10000);
+  });
+}
+boot();
 
 // ---------------- pairing web UI (Express) ----------------
 // Bot init ko block nahi karta — saath me chalta hai.
