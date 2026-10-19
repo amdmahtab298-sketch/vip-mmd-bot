@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: vip-mmd-bot
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node index.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+    # Free tier par disk ephemeral hai — har redeploy par dobara pairing karni padegi.
+    # (README me session backup + 24/7 pinger ka tareeka diya hai.)
+    # Pairing UI deploy ke baad service ke public URL par milegi, e.g.
+    # https://vip-mmd-bot.onrender.com
