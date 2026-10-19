@@ -252,10 +252,13 @@ async function startSock() {
   };
 
   // Pairing-code flow (pehli baar): QR fallback
+  // Timer fire hote waqt dobara check karo — QR se pair ho gaya ho to code mat mango
+  // (dono flow ek saath chalne se WhatsApp confuse hokar logout kar deta hai).
   if (!state.creds.registered) {
     const phone = config.pairingNumber.replace(/\D/g, '');
     setTimeout(async () => {
       try {
+        if (state.creds.registered) return; // tab tak QR se pair ho gaya — code ki zaroorat nahi
         const code = await sock.requestPairingCode(phone);
         console.log('\n==============================================');
         console.log('📱 WhatsApp kholo > Linked devices > "Link with phone number"');
@@ -403,7 +406,7 @@ function pairingPage() {
 <title>VIP MMD Bot — Pairing</title><style>${PAGE_CSS}</style></head><body>
 <div class="card">
   <div class="brand"><h1>🤖 VIP MMD Bot</h1><p>WhatsApp se connect karo — 2 minute me live!</p></div>
-  <div style="text-align:center"><span class="status off">● Bot abhi connected nahi hai</span></div>
+  <div style="text-align:center"><span class="status off" id="connStatus">● Bot abhi connected nahi hai</span></div>
   <div class="tabs">
     <button class="tab active" id="tab-code" onclick="showTab('code')">🔑 Pairing Code</button>
     <button class="tab" id="tab-qr" onclick="showTab('qr')">📷 QR Code</button>
@@ -490,6 +493,15 @@ function loadQR(silent){
     else if(!silent){ msg.textContent='⚠️ '+(r.j.error||'QR nahi mila'); }
   }).catch(function(){ if(!silent) msg.textContent='⚠️ Server se baat nahi ho payi'; });
 }
+// Connection status auto-refresh (har 8s): connect hote hi page khud dashboard me badal jayega,
+// taaki "connected nahi hai" wala text stale na rahe.
+setInterval(function(){
+  fetch('/api/status').then(function(r){ return r.json(); })
+  .then(function(j){
+    if(j && j.connected){ location.reload(); }
+    else { var s=document.getElementById('connStatus'); if(s){ s.className='status off'; s.textContent='● Bot abhi connected nahi hai'; } }
+  }).catch(function(){});
+},8000);
 </script></body></html>`;
 }
 
@@ -515,6 +527,9 @@ app.get('/', (req, res) => {
 });
 
 app.get('/health', (req, res) => res.status(200).send('OK'));
+
+// Connection status (pairing page auto-refresh ke liye)
+app.get('/api/status', (req, res) => res.json({ connected: isConnected }));
 
 // QR code as PNG data URL (pairing page ka QR tab) — har ~20s me naya QR aata hai
 app.get('/api/qr', async (req, res) => {
