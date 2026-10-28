@@ -219,6 +219,25 @@ module.exports = [
     }
   },
   {
+    name: 'antiabuse', aliases: ['nogaali'], category: 'Group',
+    desc: 'Gaali-galoj auto-delete (default ON)', usage: '.antiabuse on/off',
+    groupOnly: true, adminOnly: true,
+    run: async (ctx) => {
+      const { args, chatId, store, reply } = ctx;
+      if (args[0] === 'off') {
+        store.antiabuseOff.add(chatId);
+        await reply('🚫 Anti-abuse OFF! Ab gaali wale message delete nahi honge.');
+      } else if (args[0] === 'on') {
+        store.antiabuseOff.delete(chatId);
+        await reply('🚫 Anti-abuse ON! Gaali wala message auto-delete hoga (bot ka group admin hona zaroori hai).');
+      } else {
+        await reply(store.antiabuseOff.has(chatId)
+          ? '🚫 Anti-abuse abhi OFF hai. ON karne ke liye: .antiabuse on'
+          : '🚫 Anti-abuse abhi ON hai (default). Band karne ke liye: .antiabuse off');
+      }
+    }
+  },
+  {
     name: 'linkoff', aliases: [], category: 'Group',
     desc: 'Anti-link band karo', usage: '.linkoff',
     groupOnly: true, adminOnly: true,
