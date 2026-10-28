@@ -121,6 +121,8 @@ async function handleOne(sock, msg) {
     }
     const chatId = msg.key.remoteJid;
     if (!chatId || chatId === 'status@broadcast') return;
+    // DEBUG: har message ka fromMe/chat/text log karo
+    try { console.log(`📩 msg fromMe=${!!msg.key.fromMe} chat=${chatId} text=${JSON.stringify(getText(msg)).slice(0, 80)}`); } catch {}
 
     const sender = msg.key.participant ? normJid(msg.key.participant) : normJid(chatId);
     const isGroup = chatId.endsWith('@g.us');
@@ -303,6 +305,7 @@ async function startSock() {
     }
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
+      console.log('🔌 connection close — code:', code, '|', lastDisconnect?.error?.message || 'no-msg');
       if (code === DisconnectReason.loggedOut) {
         // Session khatam — saaf karo aur naye socket se dobara pairing ke liye taiyaar raho.
         // process.exit NAHI karenge (Render "exited early" mail bhejta hai) — pairing page se dobara pair ho jayega.
@@ -318,6 +321,11 @@ async function startSock() {
   });
 
   sock.ev.on('messages.upsert', async (upsert) => {
+    // DEBUG: har upsert log karo — pata chalega message bot tak pahunch raha hai ya nahi
+    try {
+      const flags = (upsert.messages || []).map((m) => (m.key.fromMe ? 'fromMe' : 'other')).join(',');
+      console.log(`📥 upsert type=${upsert.type} count=${upsert.messages?.length || 0} [${flags}]`);
+    } catch {}
     if (upsert.type !== 'notify') return;
     for (const msg of upsert.messages) await handleOne(sock, msg);
   });

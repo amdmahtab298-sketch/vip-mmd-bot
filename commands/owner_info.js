@@ -481,7 +481,8 @@ module.exports = [
     usage: '.restart',
     ownerOnly: true,
     run: async (ctx) => {
-      try { await ctx.reply('🔄 Restart ho raha hai...'); } catch (e) {}
+      try { await ctx.reply('🔄 Restart ho raha hai... (Render mail ignore karo, ye normal hai)'); } catch (e) {}
+      // Render par process.exit = service restart (Render khud dobara chalata hai)
       setTimeout(() => process.exit(0), 1200);
     }
   },
@@ -493,8 +494,10 @@ module.exports = [
     usage: '.shutdown',
     ownerOnly: true,
     run: async (ctx) => {
-      try { await ctx.reply('👋 Bot band ho raha hai.'); } catch (e) {}
-      setTimeout(() => process.exit(0), 1200);
+      // process.exit MAT karo (Render "server failure" mail bhejta hai + waise bhi restart kar deta hai).
+      // Seedha WhatsApp se logout karo — session saaf, pairing page se dobara pair ho jayega.
+      try { await ctx.reply('👋 Bot WhatsApp se logout ho raha hai. Dobara chalane ke liye pairing page se QR scan karo.'); } catch (e) {}
+      try { await ctx.sock.logout(); } catch (e) {}
     }
   },
   {
