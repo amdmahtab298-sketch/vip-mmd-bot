@@ -108,23 +108,25 @@ function isViewOnce(msg) {
 //  3) Collapse: dohre/lambe akshar sikod kar — madarchoooood -> madarchod
 const ABUSE_WORDS = [
   // --- Maa/behen wale (sabse common) ---
-  'madarchod', 'madharchod', 'madarchhod', 'maderchod', 'madarchud', 'madrchod',
-  'behenchod', 'bhenchod', 'behnchod', 'behenchud', 'bhenchud', 'bharchod', 'bhenchhod',
+  'madarchod', 'madharchod', 'madarchhod', 'maderchod', 'madarchud', 'madrchod', 'madchod', 'motherchod',
+  'behenchod', 'bhenchod', 'behnchod', 'behenchud', 'bhenchud', 'bharchod', 'bhenchhod', 'behenchhod', 'benchod',
   'teri maa ki', 'teri behen ki', 'maa ki aankh',
+  'behen ke laude', 'behen ke lode', 'maa ke laude', 'maa ke lode', 'behen ka lauda', 'maa ka lauda',
   // --- Bhosdi / chutiya / gaand family ---
   'bhosdi', 'bhosda', 'bhosdo', 'bhosdika', 'bhosdike', 'bhosdiwala', 'bhosad',
-  'chutiya', 'chutya', 'chutiye', 'chutia', 'chodu',
-  'gaandu', 'gandu', 'gandmara', 'gaandmara', 'jhantu', 'jhaantu', 'jhaant',
+  'bhosd', 'bosdi', 'bosda', 'bhosadi', 'bhosde', 'bsdke',
+  'chutiya', 'chutya', 'chutiye', 'chutia', 'chodu', 'chootiya', 'chutad',
+  'gaandu', 'gandu', 'gandoo', 'gandmara', 'gaandmara', 'jhantu', 'jhaantu', 'jhaant', 'jhatu', 'jhaatu',
   // --- Lund / lauda family ---
-  'lauda', 'laude', 'loda', 'lode', 'lund', 'tatte', 'tatta',
+  'lauda', 'laude', 'loda', 'lode', 'lodu', 'lund', 'lundfakir', 'tatte', 'tatta',
   // --- Character par gaaliyan ---
-  'randi', 'raand', 'gashti', 'bhadwa', 'bhadwe', 'bhadkhau', 'chhinal', 'lanja', 'lanjakodaka',
+  'randi', 'raand', 'gashti', 'bhadwa', 'bhadwe', 'bhadkhau', 'chhinal', 'chinal', 'chhinar', 'lanja', 'lanjakodaka',
   'harami', 'haraami', 'haramkhor', 'haramzada', 'haramzadi',
   // --- Aam gaaliyan / taane ---
   'kamina', 'kamine', 'nalayak', 'bewakoof', 'bevkoof', 'bsdk',
   'kutte ki aulad', 'suar ki aulad',
   // --- Punjabi ---
-  'fuddu', 'fuddi', 'fudda', 'kanjar', 'kanjari', 'teri maa di', 'teri pen di', 'maa da fudda', 'pudda',
+  'fuddu', 'fuddi', 'fudda', 'phuddu', 'phuddi', 'kanjar', 'kanjari', 'teri maa di', 'teri pen di', 'maa da fudda', 'pudda',
   // --- Bengali ---
   'khanki', 'bokachoda', 'bokachod', 'shuorer bachcha',
   // --- Marathi ---
@@ -146,7 +148,7 @@ const ABUSE_WORDS = [
 ];
 const ABUSE_SHORT = ['bc', 'mc', 'kys', 'stfu', 'gtfo']; // abbreviations — sirf whole-word match
 // Ye shabd sirf POORE word ke roop me aaye tabhi delete honge (substring par bekasoor shabd udte):
-const ABUSE_WHOLE = ['chut', 'gaand', 'gadha', 'suar', 'dick', 'cock', 'pussy', 'hoe', 'thot', 'prick', 'ass', 'bur'];
+const ABUSE_WHOLE = ['chut', 'gaand', 'gand', 'land', 'landa', 'lulla', 'lulli', 'gadha', 'suar', 'dick', 'cock', 'pussy', 'hoe', 'thot', 'prick', 'ass', 'bur'];
 function normalizeAbuseText(s) {
   let t = String(s).toLowerCase().replace(/@/g, 'a').replace(/\$/g, 's');
   t = t.replace(/[^\p{L}\p{N}]/gu, '');
@@ -154,7 +156,9 @@ function normalizeAbuseText(s) {
 }
 const collapseAbuse = (s) => s.replace(/(.)\1+/g, '$1');
 const ABUSE_COMPACT = ABUSE_WORDS.map(normalizeAbuseText).filter((w) => w.length >= 3);
-const ABUSE_COLLAPSED = ABUSE_COMPACT.map(collapseAbuse);
+// Collapsed roop tabhi rakho jab wo lamba ho, ya khud ek asli listed gaali ho —
+// warna raand->'rand' ('random'), tatta->'tata' (Tata/bye-bye), jhaant->'jhat' ('jhatka') jaise bekasoor shabd fas jate.
+const ABUSE_COLLAPSED = ABUSE_COMPACT.map(collapseAbuse).filter((w) => w.length >= 5 || ABUSE_COMPACT.includes(w));
 function hasAbuse(text) {
   if (!text) return false;
   const n = normalizeAbuseText(text);
