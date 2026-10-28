@@ -230,10 +230,8 @@ async function handleOne(sock, msg) {
     if (isGroup && store.antilinkChats.has(chatId) && /https?:\/\/|www\.|chat\.whatsapp\.com/i.test(text)) {
       const admin = await H.isGroupAdmin(sock, chatId, sender);
       if (!admin) {
-        try {
-          await sock.sendMessage(chatId, { delete: msg.key });
-          await H.sendText(sock, chatId, `🔗 @${senderNum(sender)} link allowed nahi hai!`, null).catch(() => {});
-        } catch { /* ignore */ }
+        const ok = await H.deleteMessageForEveryone(sock, msg);
+        if (ok) await H.sendText(sock, chatId, `🔗 @${senderNum(sender)} link allowed nahi hai!`, null).catch(() => {});
         return;
       }
     }
@@ -246,11 +244,10 @@ async function handleOne(sock, msg) {
     if (isGroup && !store.antiabuseOff.has(chatId) && !text.startsWith(config.prefix) && hasAbuse(text)) {
       const admin = await H.isGroupAdmin(sock, chatId, sender);
       if (!admin && senderNum(sender) !== ownerNum()) {
-        let deleted = false;
-        try {
-          await sock.sendMessage(chatId, { delete: msg.key });
-          deleted = true;
-        } catch { /* bot admin nahi hai — delete fail, chup raho */ }
+        // FIX (2026-10-28): raw msg.key se delete sirf owner-wale group me chalta tha;
+        // sirf-admin wale group me LID-wala key server reject kar deta tha. Ab helper
+        // pehle asli number (participantAlt) se, fail ho to LID se delete try karta hai.
+        const deleted = await H.deleteMessageForEveryone(sock, msg);
         if (deleted) {
           const key = chatId + ':' + sender;
           const now = Date.now();
