@@ -220,7 +220,7 @@ module.exports = [
   },
   {
     name: 'antiabuse', aliases: ['nogaali'], category: 'Group',
-    desc: 'Gaali-galoj auto-delete (default ON)', usage: '.antiabuse on/off',
+    desc: 'Gaali-galoj auto-delete + 3-strike remove (default ON)', usage: '.antiabuse on/off',
     groupOnly: true, adminOnly: true,
     run: async (ctx) => {
       const { args, chatId, store, reply } = ctx;
@@ -229,11 +229,28 @@ module.exports = [
         await reply('🚫 Anti-abuse OFF! Ab gaali wale message delete nahi honge.');
       } else if (args[0] === 'on') {
         store.antiabuseOff.delete(chatId);
-        await reply('🚫 Anti-abuse ON! Gaali wala message auto-delete hoga (bot ka group admin hona zaroori hai).');
+        await reply('🚫 Anti-abuse ON! Gaali wala message auto-delete hoga, 3 warnings par member REMOVE hoga (bot ka group admin hona zaroori hai).');
       } else {
         await reply(store.antiabuseOff.has(chatId)
           ? '🚫 Anti-abuse abhi OFF hai. ON karne ke liye: .antiabuse on'
-          : '🚫 Anti-abuse abhi ON hai (default). Band karne ke liye: .antiabuse off');
+          : '🚫 Anti-abuse abhi ON hai (default) — 3-strike system active. Band karne ke liye: .antiabuse off');
+      }
+    }
+  },
+  {
+    name: 'resetwarn', aliases: ['clearwarn'], category: 'Group',
+    desc: 'Kisi member ki anti-abuse warnings saaf karo', usage: '.resetwarn @user',
+    groupOnly: true, adminOnly: true,
+    run: async (ctx) => {
+      const { msg, args, chatId, store, reply } = ctx;
+      const target = targetFrom(msg, args);
+      if (!target) { await reply('❌ Kiski warnings saaf karu? .resetwarn @user'); return; }
+      const key = chatId + ':' + target;
+      if (store.abuseWarns.has(key)) {
+        store.abuseWarns.delete(key);
+        await reply('✅ Warnings saaf kar di gayi. Ab uski count 0 se shuru hogi.');
+      } else {
+        await reply('ℹ️ Is member ki koi warning nahi hai.');
       }
     }
   },

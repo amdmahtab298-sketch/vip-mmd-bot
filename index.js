@@ -101,24 +101,33 @@ function isViewOnce(msg) {
   return !!(m.viewOnceMessage || m.viewOnceMessageV2);
 }
 
-// ---------------- anti-abuse filter (gaali-galoj auto-delete) ----------------
-// Trick-proof matching: text ko compact karke (spaces/symbols hata kar) check karte
-// hain, taaki "g a a l i", "g**li", "gaali!" jaise tricks bhi pakde jayein.
+// ---------------- anti-abuse filter (gaali-galoj auto-delete) — ADVANCED ----------------
+// Teen layer ki trick-proof matching:
+//  1) Compact: spaces/symbols hata kar — "g a a l i", "g**li", "gaali!" pakda jayega
+//  2) Leet-normalize: m4darchod -> madarchod, chut1ya -> chutiya, @->a, $->s
+//  3) Collapse: dohre/lambe akshar sikod kar — madarchoooood -> madarchod
 const ABUSE_WORDS = [
   'madarchod', 'maderchod', 'behenchod', 'bhenchod', 'bhosdi', 'chutiya', 'chutya', 'chutiye',
   'gaandu', 'gandu', 'harami', 'haramkhor', 'randi', 'lauda', 'laude', 'lund', 'bsdk',
-  'motherfucker', 'fucker', 'fucking', 'fuck', 'bitch', 'bastard', 'asshole', 'whore', 'slut',
+  'motherfucker', 'fucker', 'fucking', 'fuck', 'bitch', 'bastard', 'asshole', 'whore', 'slut', 'dickhead',
+  'teri maa ki chut', 'maa ki chut', 'son of a bitch',
   'मादरचोद', 'बहनचोद', 'भोसड़ी', 'चूतिया', 'गांडू', 'रंडी', 'हरामी', 'लौड़ा', 'हरामखोर',
 ];
 const ABUSE_SHORT = ['bc', 'mc']; // chhote abbreviations — sirf whole-word match hoga
-function compactForAbuse(s) {
-  return String(s).toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+function normalizeAbuseText(s) {
+  let t = String(s).toLowerCase().replace(/@/g, 'a').replace(/\$/g, 's');
+  t = t.replace(/[^\p{L}\p{N}]/gu, '');
+  return t.replace(/0/g, 'o').replace(/1/g, 'i').replace(/3/g, 'e').replace(/4/g, 'a').replace(/5/g, 's').replace(/7/g, 't');
 }
-const ABUSE_COMPACT = ABUSE_WORDS.map(compactForAbuse).filter((w) => w.length >= 3);
+const collapseAbuse = (s) => s.replace(/(.)\1+/g, '$1');
+const ABUSE_COMPACT = ABUSE_WORDS.map(normalizeAbuseText).filter((w) => w.length >= 3);
+const ABUSE_COLLAPSED = ABUSE_COMPACT.map(collapseAbuse);
 function hasAbuse(text) {
   if (!text) return false;
-  const compact = compactForAbuse(text);
-  for (const w of ABUSE_COMPACT) if (compact.includes(w)) return true;
+  const n = normalizeAbuseText(text);
+  for (const w of ABUSE_COMPACT) if (n.includes(w)) return true;
+  const c = collapseAbuse(n);
+  for (const w of ABUSE_COLLAPSED) if (c.includes(w)) return true;
   const spaced = ' ' + String(text).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ') + ' ';
   for (const w of ABUSE_SHORT) if (spaced.includes(' ' + w + ' ')) return true;
   return false;
@@ -195,19 +204,51 @@ async function handleOne(sock, msg) {
       }
     }
 
-    // ---- hook: anti-abuse (gaali-galoj -> auto delete for everyone) ----
+    // ---- hook: anti-abuse ADVANCED (gaali -> delete + 3-strike system) ----
     // Default ON hai har group me (.antiabuse off se band hota hai).
+    // Strike 1-2: delete + warning | Strike 3: delete + group se REMOVE (24h me strikes reset).
     // Admins aur owner exempt hain. Delete tabhi hoga jab bot group admin ho (WhatsApp rule).
     if (isGroup && !store.antiabuseOff.has(chatId) && !text.startsWith(config.prefix) && hasAbuse(text)) {
       const admin = await H.isGroupAdmin(sock, chatId, sender);
       if (!admin && senderNum(sender) !== ownerNum()) {
+        let deleted = false;
         try {
           await sock.sendMessage(chatId, { delete: msg.key });
-          await sock.sendMessage(chatId, {
-            text: `🚫 @${senderNum(sender)} gaali-galoj allowed nahi hai! Message delete kar diya gaya hai.`,
-            mentions: [sender],
-          });
-        } catch { /* bot admin nahi hai to delete fail — chup raho */ }
+          deleted = true;
+        } catch { /* bot admin nahi hai — delete fail, chup raho */ }
+        if (deleted) {
+          const key = chatId + ':' + sender;
+          const now = Date.now();
+          let rec = store.abuseWarns.get(key);
+          if (!rec || now - rec.firstAt > 24 * 60 * 60 * 1000) rec = { count: 0, firstAt: now };
+          rec.count++;
+          store.abuseWarns.set(key, rec);
+          console.log(`🚫 abuse deleted: ${senderNum(sender)} in group (strike ${rec.count}/3)`);
+          if (rec.count >= 3) {
+            let kicked = false;
+            try {
+              await sock.groupParticipantsUpdate(chatId, [sender], 'remove');
+              kicked = true;
+            } catch { /* remove fail — warning par ruk jao */ }
+            if (kicked) {
+              store.abuseWarns.delete(key);
+              await sock.sendMessage(chatId, {
+                text: `⛔ @${senderNum(sender)} ko gaali-galoj ki 3 warnings ke baad group se REMOVE kar diya gaya.`,
+                mentions: [sender],
+              }).catch(() => {});
+            } else {
+              await sock.sendMessage(chatId, {
+                text: `🚫 @${senderNum(sender)} Warning ${rec.count}/3 — message delete kar diya gaya. (Remove nahi ho paya — bot admin hai na?)`,
+                mentions: [sender],
+              }).catch(() => {});
+            }
+          } else {
+            await sock.sendMessage(chatId, {
+              text: `🚫 @${senderNum(sender)} gaali-galoj allowed nahi hai! Message delete kar diya gaya. (Warning ${rec.count}/3 — 3 warnings par REMOVE ho jaoge)`,
+              mentions: [sender],
+            }).catch(() => {});
+          }
+        }
         return;
       }
     }
