@@ -31,6 +31,7 @@ let currentSock = null;    // live Baileys socket (pairing API isi ko use karega
 let latestQR = null;       // Baileys se aaya latest QR string (web UI QR tab ke liye)
 let latestQRAt = 0;        // QR kab aaya (ms timestamp)
 let welcomed = false;      // 'open' par owner ko welcome msg sirf ek baar
+let reconnectDelay = 3000; // reconnect backoff (har fail par double, max 60s)
 const seenMsgIds = new Set(); // loop/duplicate protection (har message ID ek baar)
 const bootTime = Date.now();
 
@@ -236,6 +237,11 @@ async function startSock() {
     logger: log,
     printQRInTerminal: false,
     browser: ['VIP MMD Bot', 'Chrome', '1.0'],
+    // History sync BAND — warna connect hote hi saari purani chats sync hoti hain
+    // aur free server par socket "503 Stream Errored" se mar jata hai
+    // (2026-10-28 ke Render logs me connect ke 1s baad yahi hua tha).
+    syncFullHistory: false,
+    markOnlineOnConnect: false,
   });
   currentSock = sock; // web UI ke /api/pair ke liye
 
@@ -253,29 +259,10 @@ async function startSock() {
     return sent;
   };
 
-  // Pairing-code flow (pehli baar): QR fallback
-  // Timer fire hote waqt dobara check karo — QR se pair ho gaya ho to code mat mango
-  // (dono flow ek saath chalne se WhatsApp confuse hokar logout kar deta hai).
-  if (!state.creds.registered) {
-    const phone = config.pairingNumber.replace(/\D/g, '');
-    setTimeout(async () => {
-      try {
-        if (state.creds.registered) return; // tab tak QR se pair ho gaya — code ki zaroorat nahi
-        const code = await sock.requestPairingCode(phone);
-        console.log('\n==============================================');
-        console.log('📱 WhatsApp kholo > Linked devices > "Link with phone number"');
-        console.log(`🔢 Number: ${config.pairingNumber}`);
-        console.log(`🔑 Pairing code: ${code}`);
-        console.log('(code 60 second me expire ho jayega — jaldi daalo)');
-        console.log('==============================================\n');
-      } catch (e) {
-        console.log('⚠️ Pairing code fail — neeche QR aaye to scan kar lo.');
-        sock.ev.on('connection.update', (u) => {
-          if (u.qr) qrcode.generate(u.qr, { small: true });
-        });
-      }
-    }, 3000);
-  }
+  // Pairing code AUTO-generate BAND (2026-10-28): pehle har fresh start par code
+  // manga jata tha, jo expire hokar 401/logout loop banata tha aur WhatsApp ko
+  // irritate karta tha. Ab code sirf web UI ke "Pairing Code" tab se on-demand
+  // milega (POST /api/pair); warna QR tab se scan karo — QR khud aata rahega.
 
   sock.ev.on('creds.update', saveCreds);
 
@@ -284,6 +271,7 @@ async function startSock() {
     isConnected = connection === 'open';
     if (u.qr) { latestQR = u.qr; latestQRAt = Date.now(); } // web UI QR tab ke liye save
     if (connection === 'open') {
+      reconnectDelay = 3000; // safal connect — backoff reset
       console.log(`✅ Bot connected! (${sock.user?.id})`);
       console.log(`📜 ${allCommands.length} commands live — prefix "${config.prefix}"`);
       // Pehli baar connect hone par owner ke number par confirmation bhejo
@@ -312,11 +300,16 @@ async function startSock() {
         console.log('❌ Logged out. Session saaf kar raha hoon — pairing page kholo aur dobara pair karo.');
         try { fs.rmSync(path.join(__dirname, config.sessionDir), { recursive: true, force: true }); } catch {}
         latestQR = null; latestQRAt = 0;
-        setTimeout(() => startSock().catch((e) => console.log('re-pair start fail:', e.message)), 3000);
+        reconnectDelay = 5000;
+        setTimeout(() => startSock().catch((e) => console.log('re-pair start fail:', e.message)), reconnectDelay);
         return;
       }
-      console.log('🔄 Connection toot gaya — 3s me reconnect...');
-      setTimeout(() => startSock().catch((e) => console.log('reconnect fail:', e.message, '— agla retry 10s me')), 3000);
+      // Backoff: har fail par wait double (3s → 6s → 12s ... max 60s), taaki
+      // WhatsApp par reconnect ka bojh na pade (503 ke baad turant retry ulta padta hai).
+      const waitMs = reconnectDelay;
+      reconnectDelay = Math.min(reconnectDelay * 2, 60000);
+      console.log(`🔄 Connection toot gaya — ${Math.round(waitMs / 1000)}s me reconnect...`);
+      setTimeout(() => startSock().catch((e) => console.log('reconnect fail:', e.message)), waitMs);
     }
   });
 
