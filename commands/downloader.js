@@ -90,7 +90,7 @@ module.exports = [
   /* ---- audio variants ---- */
   {
     name: 'audio',
-    aliases: [],
+    aliases: ['mp3'],
     category: 'Downloader',
     desc: 'Link se audio (mp3) nikalo',
     usage: '.audio <video link> bhejo',
