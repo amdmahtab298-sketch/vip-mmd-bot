@@ -107,13 +107,46 @@ function isViewOnce(msg) {
 //  2) Leet-normalize: m4darchod -> madarchod, chut1ya -> chutiya, @->a, $->s
 //  3) Collapse: dohre/lambe akshar sikod kar — madarchoooood -> madarchod
 const ABUSE_WORDS = [
-  'madarchod', 'maderchod', 'behenchod', 'bhenchod', 'bhosdi', 'chutiya', 'chutya', 'chutiye',
-  'gaandu', 'gandu', 'harami', 'haramkhor', 'randi', 'lauda', 'laude', 'lund', 'bsdk',
-  'motherfucker', 'fucker', 'fucking', 'fuck', 'bitch', 'bastard', 'asshole', 'whore', 'slut', 'dickhead',
+  // --- Maa/behen wale (sabse common) ---
+  'madarchod', 'madharchod', 'madarchhod', 'maderchod', 'madarchud', 'madrchod',
+  'behenchod', 'bhenchod', 'behnchod', 'behenchud', 'bhenchud', 'bharchod', 'bhenchhod',
+  'teri maa ki', 'teri behen ki', 'maa ki aankh',
+  // --- Bhosdi / chutiya / gaand family ---
+  'bhosdi', 'bhosda', 'bhosdo', 'bhosdika', 'bhosdike', 'bhosdiwala', 'bhosad',
+  'chutiya', 'chutya', 'chutiye', 'chutia', 'chodu',
+  'gaandu', 'gandu', 'gandmara', 'gaandmara', 'jhantu', 'jhaantu', 'jhaant',
+  // --- Lund / lauda family ---
+  'lauda', 'laude', 'loda', 'lode', 'lund', 'tatte', 'tatta',
+  // --- Character par gaaliyan ---
+  'randi', 'raand', 'gashti', 'bhadwa', 'bhadwe', 'bhadkhau', 'chhinal', 'lanja', 'lanjakodaka',
+  'harami', 'haraami', 'haramkhor', 'haramzada', 'haramzadi',
+  // --- Aam gaaliyan / taane ---
+  'kamina', 'kamine', 'nalayak', 'bewakoof', 'bevkoof', 'bsdk',
+  'kutte ki aulad', 'suar ki aulad',
+  // --- Punjabi ---
+  'fuddu', 'fuddi', 'fudda', 'kanjar', 'kanjari', 'teri maa di', 'teri pen di', 'maa da fudda', 'pudda',
+  // --- Bengali ---
+  'khanki', 'bokachoda', 'bokachod', 'shuorer bachcha',
+  // --- Marathi ---
+  'zavnya', 'zhavnya', 'aaichi gaand',
+  // --- South ---
+  'punda', 'mayiru', 'dengu',
+  // --- English (Gen Z samet) ---
+  'fuck', 'fucking', 'fucker', 'fuckers', 'fucked', 'fuckface', 'fuckboy', 'clusterfuck', 'dumbfuck',
+  'motherfucker', 'motherfucking', 'fck', 'phuck',
+  'shit', 'bullshit', 'shithead', 'shithole', 'dipshit', 'shitty',
+  'bitch', 'bitches', 'bitchass', 'bitchy', 'biatch',
+  'cunt', 'whore', 'whores', 'slut', 'sluts', 'slutty',
+  'bastard', 'asshole', 'dickhead', 'douchebag', 'douche',
+  'wanker', 'tosser', 'twat', 'bollocks', 'bugger', 'retard', 'retarded',
   'teri maa ki chut', 'maa ki chut', 'son of a bitch',
-  'मादरचोद', 'बहनचोद', 'भोसड़ी', 'चूतिया', 'गांडू', 'रंडी', 'हरामी', 'लौड़ा', 'हरामखोर',
+  // --- Hindi (Devanagari) ---
+  'मादरचोद', 'बहनचोद', 'भोसड़ी', 'भोसड़ा', 'चूतिया', 'गांडू', 'रंडी', 'हरामी', 'लौड़ा',
+  'कमीना', 'नालायक', 'बेवकूफ', 'भड़वा', 'कंजर',
 ];
-const ABUSE_SHORT = ['bc', 'mc']; // chhote abbreviations — sirf whole-word match hoga
+const ABUSE_SHORT = ['bc', 'mc', 'kys', 'stfu', 'gtfo']; // abbreviations — sirf whole-word match
+// Ye shabd sirf POORE word ke roop me aaye tabhi delete honge (substring par bekasoor shabd udte):
+const ABUSE_WHOLE = ['chut', 'gaand', 'gadha', 'suar', 'dick', 'cock', 'pussy', 'hoe', 'thot', 'prick', 'ass', 'bur'];
 function normalizeAbuseText(s) {
   let t = String(s).toLowerCase().replace(/@/g, 'a').replace(/\$/g, 's');
   t = t.replace(/[^\p{L}\p{N}]/gu, '');
@@ -130,6 +163,7 @@ function hasAbuse(text) {
   for (const w of ABUSE_COLLAPSED) if (c.includes(w)) return true;
   const spaced = ' ' + String(text).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ') + ' ';
   for (const w of ABUSE_SHORT) if (spaced.includes(' ' + w + ' ')) return true;
+  for (const w of ABUSE_WHOLE) if (spaced.includes(' ' + w + ' ')) return true;
   return false;
 }
 
