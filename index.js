@@ -204,9 +204,10 @@ async function handleOne(sock, msg) {
       }
     }
 
-    // ---- hook: anti-abuse ADVANCED (gaali -> delete + 3-strike system) ----
+    // ---- hook: anti-abuse ADVANCED (gaali -> delete + warning) ----
     // Default ON hai har group me (.antiabuse off se band hota hai).
-    // Strike 1-2: delete + warning | Strike 3: delete + group se REMOVE (24h me strikes reset).
+    // Har gaali par: message delete + warning count badhta hai (24h me reset).
+    // NOTE: user ke kehne par auto-REMOVE hata diya gaya hai (2026-10-28) — sirf delete+warn.
     // Admins aur owner exempt hain. Delete tabhi hoga jab bot group admin ho (WhatsApp rule).
     if (isGroup && !store.antiabuseOff.has(chatId) && !text.startsWith(config.prefix) && hasAbuse(text)) {
       const admin = await H.isGroupAdmin(sock, chatId, sender);
@@ -223,31 +224,11 @@ async function handleOne(sock, msg) {
           if (!rec || now - rec.firstAt > 24 * 60 * 60 * 1000) rec = { count: 0, firstAt: now };
           rec.count++;
           store.abuseWarns.set(key, rec);
-          console.log(`🚫 abuse deleted: ${senderNum(sender)} in group (strike ${rec.count}/3)`);
-          if (rec.count >= 3) {
-            let kicked = false;
-            try {
-              await sock.groupParticipantsUpdate(chatId, [sender], 'remove');
-              kicked = true;
-            } catch { /* remove fail — warning par ruk jao */ }
-            if (kicked) {
-              store.abuseWarns.delete(key);
-              await sock.sendMessage(chatId, {
-                text: `⛔ @${senderNum(sender)} ko gaali-galoj ki 3 warnings ke baad group se REMOVE kar diya gaya.`,
-                mentions: [sender],
-              }).catch(() => {});
-            } else {
-              await sock.sendMessage(chatId, {
-                text: `🚫 @${senderNum(sender)} Warning ${rec.count}/3 — message delete kar diya gaya. (Remove nahi ho paya — bot admin hai na?)`,
-                mentions: [sender],
-              }).catch(() => {});
-            }
-          } else {
-            await sock.sendMessage(chatId, {
-              text: `🚫 @${senderNum(sender)} gaali-galoj allowed nahi hai! Message delete kar diya gaya. (Warning ${rec.count}/3 — 3 warnings par REMOVE ho jaoge)`,
-              mentions: [sender],
-            }).catch(() => {});
-          }
+          console.log(`🚫 abuse deleted: ${senderNum(sender)} in group (warning ${rec.count})`);
+          await sock.sendMessage(chatId, {
+            text: `🚫 @${senderNum(sender)} gaali-galoj allowed nahi hai! Message delete kar diya gaya. (Warning ${rec.count})`,
+            mentions: [sender],
+          }).catch(() => {});
         }
         return;
       }
