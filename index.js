@@ -17,6 +17,9 @@ const config = require('./config');
 const store = require('./lib/store');
 const H = require('./lib/helpers');
 const { toStickerBuffer } = require('./lib/sticker');
+const KV = require('./lib/kv'); // MMD bot ka apna online storage (alag Supabase project)
+const { useSupabaseAuthState } = require('./lib/supaAuth');
+let supaAuth = null; // DB-backed auth state (logout par clear karne ke liye)
 
 const log = pino({ level: 'silent' });
 
@@ -269,6 +272,32 @@ async function handleOne(sock, msg) {
       }
     }
 
+    // ---- hook: sticker filter (banned sticker -> delete + warning) ----
+    // Admin/owner exempt. Delete tabhi hoga jab bot group admin ho (WhatsApp rule).
+    if (isGroup && !text.startsWith(config.prefix)) {
+      const innerS = H.unwrap(msg);
+      if (innerS?.stickerMessage) {
+        const banned = store.blockedStickers.get(chatId);
+        if (banned && banned.size) {
+          const hash = await H.stickerHash(sock, msg);
+          if (hash && banned.has(hash)) {
+            const admin = await H.isGroupAdmin(sock, chatId, sender);
+            if (!admin && senderNum(sender) !== ownerNum()) {
+              const deleted = await H.deleteMessageForEveryone(sock, msg);
+              if (deleted) {
+                console.log(`🧩 banned sticker deleted: ${senderNum(sender)} in group`);
+                await sock.sendMessage(chatId, {
+                  text: `🚫 @${senderNum(sender)} ye sticker is group me banned hai!`,
+                  mentions: [sender],
+                }).catch(() => {});
+              }
+              return;
+            }
+          }
+        }
+      }
+    }
+
     // ---- command dispatch ----
     if (!text.startsWith(config.prefix)) return;
     const parts = text.slice(config.prefix.length).trim().split(/\s+/);
@@ -325,7 +354,24 @@ async function handleOne(sock, msg) {
 
 // ---------------- socket ----------------
 async function startSock() {
-  const { state, saveCreds } = await useMultiFileAuthState(config.sessionDir);
+  // Session storage: pehle online DB (deploy-proof), warna purani file wali.
+  // DB mode me Render deploy ke baad bhi bot khud purane login se connect hoga —
+  // dobara QR/pairing NAHI karna padega.
+  let state, saveCreds;
+  if (KV.kv) {
+    try {
+      supaAuth = await useSupabaseAuthState(KV.kv);
+      state = supaAuth.state;
+      saveCreds = supaAuth.saveCreds;
+      console.log('🗄️ Session storage: ONLINE DB (deploy ke baad bhi login bacha rahega)');
+    } catch (e) {
+      console.log('⚠️ DB session load fail — file session par gir raha hoon:', e.message);
+      supaAuth = null;
+      ({ state, saveCreds } = await useMultiFileAuthState(config.sessionDir));
+    }
+  } else {
+    ({ state, saveCreds } = await useMultiFileAuthState(config.sessionDir));
+  }
   const { version } = await fetchLatestBaileysVersion();
 
   const sock = makeWASocket({
@@ -370,6 +416,14 @@ async function startSock() {
     if (connection === 'open') {
       reconnectDelay = 3000; // safal connect — backoff reset
       console.log(`✅ Bot connected! (${sock.user?.id})`);
+      // Sticker blocklist DB se uthao (sirf ek baar per process)
+      if (KV.kv && !store.stickerBlockLoaded) {
+        store.stickerBlockLoaded = true;
+        try {
+          const n = await KV.loadStickerBlocks();
+          console.log(`🧩 Sticker blocklist loaded: ${n} group(s)`);
+        } catch (e) { console.log('sticker blocklist load fail:', e.message); }
+      }
       console.log(`📜 ${allCommands.length} commands live — prefix "${config.prefix}"`);
       // Pehli baar connect hone par owner ke number par confirmation bhejo
       if (!welcomed) {
@@ -396,6 +450,7 @@ async function startSock() {
         // process.exit NAHI karenge (Render "exited early" mail bhejta hai) — pairing page se dobara pair ho jayega.
         console.log('❌ Logged out. Session saaf kar raha hoon — pairing page kholo aur dobara pair karo.');
         try { fs.rmSync(path.join(__dirname, config.sessionDir), { recursive: true, force: true }); } catch {}
+        if (supaAuth) { try { await supaAuth.clearAll(); console.log('🗄️ DB session bhi saaf kar diya.'); } catch {} supaAuth = null; }
         latestQR = null; latestQRAt = 0;
         reconnectDelay = 5000;
         setTimeout(() => startSock().catch((e) => console.log('re-pair start fail:', e.message)), reconnectDelay);

@@ -1,5 +1,7 @@
 // Group management commands — 43 commands
 const H = require('../lib/helpers');
+const KV = require('../lib/kv');
+const crypto = require('crypto');
 
 function targetFrom(msg, args) {
   const q = H.getQuotedSender(msg);
@@ -252,6 +254,61 @@ module.exports = [
       } else {
         await reply('ℹ️ Is member ki koi warning nahi hai.');
       }
+    }
+  },
+  {
+    name: 'blocksticker', aliases: ['bsticker'], category: 'Group',
+    desc: 'Kisi sticker ko is group me ban karo (us sticker ko reply karke)', usage: '.blocksticker (sticker par reply)',
+    groupOnly: true, adminOnly: true,
+    run: async (ctx) => {
+      const { sock, msg, chatId, store, reply } = ctx;
+      const qm = H.getQuotedMessage(msg);
+      if (!qm?.stickerMessage) { await reply('❌ Kisi sticker ko REPLY karke .blocksticker likho — wahi sticker ban hoga.'); return; }
+      let hash = H.stickerHashFromContent(qm);
+      if (!hash) {
+        const buf = await H.downloadRaw(sock, { key: msg.key, message: qm });
+        if (buf) hash = crypto.createHash('sha256').update(buf).digest('hex');
+      }
+      if (!hash) { await reply('❌ Sticker ki pehchan nahi mil payi, dobara try karo.'); return; }
+      if (!store.blockedStickers.has(chatId)) store.blockedStickers.set(chatId, new Set());
+      const set = store.blockedStickers.get(chatId);
+      if (set.has(hash)) { await reply('ℹ️ Ye sticker is group me pehle se banned hai.'); return; }
+      set.add(hash);
+      await KV.persistStickerBlock(chatId);
+      await reply(`🚫 Sticker ban ho gaya! Ab koi bhi member (admin/owner ko chhod kar) ye sticker bhejega to bot use auto-delete kar dega. (Is group me total banned: ${set.size})`);
+    }
+  },
+  {
+    name: 'unblocksticker', aliases: ['ubsticker'], category: 'Group',
+    desc: 'Banned sticker ko wapas allow karo (us sticker ko reply karke)', usage: '.unblocksticker (sticker par reply)',
+    groupOnly: true, adminOnly: true,
+    run: async (ctx) => {
+      const { sock, msg, chatId, store, reply } = ctx;
+      const qm = H.getQuotedMessage(msg);
+      if (!qm?.stickerMessage) { await reply('❌ Kisi sticker ko REPLY karke .unblocksticker likho.'); return; }
+      let hash = H.stickerHashFromContent(qm);
+      if (!hash) {
+        const buf = await H.downloadRaw(sock, { key: msg.key, message: qm });
+        if (buf) hash = crypto.createHash('sha256').update(buf).digest('hex');
+      }
+      if (!hash) { await reply('❌ Sticker ki pehchan nahi mil payi, dobara try karo.'); return; }
+      const set = store.blockedStickers.get(chatId);
+      if (!set || !set.has(hash)) { await reply('ℹ️ Ye sticker is group me banned hi nahi hai.'); return; }
+      set.delete(hash);
+      await KV.persistStickerBlock(chatId);
+      await reply(`✅ Sticker unban ho gaya! Ab ye sticker group me chalega. (Bache hue banned: ${set.size})`);
+    }
+  },
+  {
+    name: 'stickerblocklist', aliases: ['sblocklist', 'blockstickers'], category: 'Group',
+    desc: 'Is group me kitne sticker banned hain, dekho', usage: '.stickerblocklist',
+    groupOnly: true,
+    run: async (ctx) => {
+      const { chatId, store, reply } = ctx;
+      const set = store.blockedStickers.get(chatId);
+      const n = set ? set.size : 0;
+      if (!n) { await reply('✅ Is group me koi sticker banned nahi hai. Ban karne ke liye sticker ko reply karke .blocksticker likho (admin).'); return; }
+      await reply(`🚫 Is group me *${n}* sticker banned hain.\nJo bhi member banned sticker bhejega, bot use auto-delete kar dega (bot ka group admin hona zaroori).\nHatane ke liye: sticker ko reply karke .unblocksticker (admin).`);
     }
   },
   {
