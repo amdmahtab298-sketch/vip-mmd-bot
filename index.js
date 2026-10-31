@@ -120,6 +120,7 @@ const ABUSE_WORDS = [
   'bhosd', 'bosdi', 'bosda', 'bhosadi', 'bhosde', 'bsdke',
   'chutiya', 'chutya', 'chutiye', 'chutia', 'chodu', 'chootiya', 'chutad',
   'gaandu', 'gandu', 'gandoo', 'gandmara', 'gaandmara', 'jhantu', 'jhaantu', 'jhaant', 'jhatu', 'jhaatu',
+  'jhaat', 'jhaath', 'jhath', 'jhaathuchand', 'jhathuchand', 'jhatuchand',
   // --- Lund / lauda family ---
   'lauda', 'laude', 'loda', 'lode', 'lodu', 'lund', 'lnd', 'lundfakir', 'tatte', 'tatta',
   // --- Character par gaaliyan ---
@@ -151,7 +152,7 @@ const ABUSE_WORDS = [
 ];
 const ABUSE_SHORT = ['bc', 'mc', 'kys', 'stfu', 'gtfo']; // abbreviations — sirf whole-word match
 // Ye shabd sirf POORE word ke roop me aaye tabhi delete honge (substring par bekasoor shabd udte):
-const ABUSE_WHOLE = ['chut', 'gaand', 'gand', 'land', 'landa', 'lulla', 'lulli', 'gadha', 'suar', 'dick', 'cock', 'pussy', 'hoe', 'thot', 'prick', 'ass', 'bur'];
+const ABUSE_WHOLE = ['chut', 'gaand', 'gand', 'land', 'landa', 'lulla', 'lulli', 'gadha', 'suar', 'dick', 'cock', 'pussy', 'hoe', 'thot', 'prick', 'ass', 'bur', 'jhat'];
 function normalizeAbuseText(s) {
   let t = String(s).toLowerCase().replace(/@/g, 'a').replace(/\$/g, 's');
   t = t.replace(/[^\p{L}\p{N}]/gu, '');
@@ -172,6 +173,36 @@ function hasAbuse(text) {
   for (const w of ABUSE_SHORT) if (spaced.includes(' ' + w + ' ')) return true;
   for (const w of ABUSE_WHOLE) if (spaced.includes(' ' + w + ' ')) return true;
   return false;
+}
+
+// ---- Savage names: Mia Khalifa / Johnny Sins ----
+// Sirf 'khalifa' ya 'sins' akele NAHI chalega (Burj Khalifa, Wiz Khalifa, 'sins' aam
+// English shabd hai) — poora naam kisi bhi version me (space/dot/leet/double akshar)
+// aaye tabhi hit hoga.
+const SAVAGE_NAMES = [
+  { tag: 'mia', forms: ['miakhalifa', 'miyakhalifa'] },
+  { tag: 'johnny', forms: ['johnnysins', 'johnysins', 'johnnysin', 'johnysin'] },
+];
+const SAVAGE_REPLIES = {
+  mia: [
+    '😂 @U Mia Khalifa ka naam group me? Pehle apni browser history saaf kar le — sabko samajh aa gaya raat bhar phone me kya chalta hai tere! 🌚',
+    '😂 @U Khalifa ke sapne baad me dekhna — pehle ye bata, incognito mode ka itna experience kyu hai tujhe? 🌚',
+  ],
+  johnny: [
+    '😂 @U Johnny Sins ko yaad kar raha hai? Wo doctor, plumber, teacher sab ban gaya — tu pehle ek syllabus hi khatm kar le! 📚',
+    '😂 @U Johnny Sins ke 100 role dekh liye tune — ab khud ka ek role fix kar le: student wala! 🎓',
+  ],
+};
+function savageHit(text) {
+  if (!text) return null;
+  const n = normalizeAbuseText(text);
+  const c = collapseAbuse(n);
+  for (const p of SAVAGE_NAMES) {
+    for (const f of p.forms) {
+      if (n.includes(f) || c.includes(collapseAbuse(f))) return p.tag;
+    }
+  }
+  return null;
 }
 
 const normJid = (jid = '') => {
@@ -282,6 +313,23 @@ async function handleOne(sock, msg) {
           }).catch(() => {});
         }
         return;
+      }
+    }
+
+    // ---- hook: savage names (Mia Khalifa / Johnny Sins -> delete + savage reply) ----
+    // Admin/owner exempt. Delete bot admin hone par hi hoga (WhatsApp rule).
+    if (isGroup && !text.startsWith(config.prefix)) {
+      const hit = savageHit(text);
+      if (hit) {
+        const admin = await H.isGroupAdmin(sock, chatId, sender);
+        if (!admin && !isOwnerMsg(sock, msg, sender)) {
+          await H.deleteMessageForEveryone(sock, msg);
+          const lines = SAVAGE_REPLIES[hit];
+          const line = lines[Math.floor(Math.random() * lines.length)].replace('@U', '@' + senderNum(sender));
+          console.log(`😂 savage reply (${hit}): ${senderNum(sender)} in group`);
+          await sock.sendMessage(chatId, { text: line, mentions: [sender] }).catch(() => {});
+          return;
+        }
       }
     }
 
