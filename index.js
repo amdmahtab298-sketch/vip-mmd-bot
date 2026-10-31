@@ -262,6 +262,43 @@ const isOwnerMsg = (sock, msg, sender) => {
   return false;
 };
 
+// ---------------- sticker ban enforcement (spam-proof) ----------------
+// Purani dikkat: har sticker par metadata fetch + delete + warning — sab kuch
+// ek line me ruk-ruk ke hota tha. Koi sticker tez-tez bheje to pipeline peeche
+// pad jati aur kuch stickers bina delete hue nikal jate the.
+// Ab: pehchan turant (sync hash), delete ka kaam background me PARALLEL
+// (ek saath max 6, retry ke saath), warning ek bande ko 60s me sirf ek baar.
+const stickerWarnAt = new Map(); // `${chatId}:${sender}` -> aakhri warning ka time
+let stickerJobs = 0;
+const MAX_STICKER_JOBS = 6;
+
+async function enforceStickerBan(sock, msg, chatId, sender, banned, knownHash) {
+  while (stickerJobs >= MAX_STICKER_JOBS) await new Promise((r) => setTimeout(r, 120));
+  stickerJobs++;
+  try {
+    let hash = knownHash || null;
+    if (!hash) hash = await H.stickerHash(sock, msg); // fileSha256 na mile tab download karke pehchan
+    if (!hash || !banned.has(hash)) return;
+    const admin = await H.isGroupAdmin(sock, chatId, sender);
+    if (admin || isOwnerMsg(sock, msg, sender)) return;
+    const deleted = await H.deleteMessageForEveryone(sock, msg);
+    if (deleted) {
+      console.log(`🧩 banned sticker deleted: ${senderNum(sender)} in group`);
+      const wk = chatId + ':' + sender;
+      const now = Date.now();
+      if (now - (stickerWarnAt.get(wk) || 0) > 60000) {
+        stickerWarnAt.set(wk, now);
+        await sock.sendMessage(chatId, {
+          text: `🚫 @${senderNum(sender)} ye sticker is group me banned hai!`,
+          mentions: [sender],
+        }).catch(() => {});
+      }
+    }
+  } catch { /* ignore */ } finally {
+    stickerJobs--;
+  }
+}
+
 // ---------------- per-message handler ----------------
 async function handleOne(sock, msg) {
   try {
@@ -373,25 +410,21 @@ async function handleOne(sock, msg) {
 
     // ---- hook: sticker filter (banned sticker -> delete + warning) ----
     // Admin/owner exempt. Delete tabhi hoga jab bot group admin ho (WhatsApp rule).
+    // Spam-proof: hash check turant/sync, delete background me parallel (upar dekho).
     if (isGroup && !text.startsWith(config.prefix)) {
       const innerS = H.unwrap(msg);
       if (innerS?.stickerMessage) {
         const banned = store.blockedStickers.get(chatId);
         if (banned && banned.size) {
-          const hash = await H.stickerHash(sock, msg);
+          const hash = H.stickerHashFromContent(innerS);
           if (hash && banned.has(hash)) {
-            const admin = await H.isGroupAdmin(sock, chatId, sender);
-            if (!admin && !isOwnerMsg(sock, msg, sender)) {
-              const deleted = await H.deleteMessageForEveryone(sock, msg);
-              if (deleted) {
-                console.log(`🧩 banned sticker deleted: ${senderNum(sender)} in group`);
-                await sock.sendMessage(chatId, {
-                  text: `🚫 @${senderNum(sender)} ye sticker is group me banned hai!`,
-                  mentions: [sender],
-                }).catch(() => {});
-              }
-              return;
-            }
+            enforceStickerBan(sock, msg, chatId, sender, banned, hash); // await NAHI — pipeline tez rahe
+            return;
+          }
+          if (!hash) {
+            // Pehchan content me nahi mili — download karke check background me hoga
+            enforceStickerBan(sock, msg, chatId, sender, banned, null); // await NAHI
+            return;
           }
         }
       }
@@ -575,7 +608,9 @@ async function startSock() {
       console.log(`📥 upsert type=${upsert.type} count=${upsert.messages?.length || 0} [${flags}]`);
     } catch {}
     if (upsert.type !== 'notify') return;
-    for (const msg of upsert.messages) await handleOne(sock, msg);
+    // Saare messages PARALLEL process karo — pehle ek line me rukte the, isiliye
+    // flood ke time bot peeche pad jata tha (speed fix, 2026-10-31).
+    await Promise.allSettled((upsert.messages || []).map((m) => handleOne(sock, m)));
   });
 
   // welcome / goodbye
