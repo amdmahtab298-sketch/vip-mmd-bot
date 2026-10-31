@@ -330,7 +330,9 @@ async function handleOne(sock, msg) {
       await H.sendText(sock, chatId, '👥 Ye command sirf group me chalegi.', msg);
       return;
     }
-    if (cmd.adminOnly && !(await H.isGroupAdmin(sock, chatId, sender))) {
+    // Admin commands: group admin/owner (superadmin) ke alawa BOT OWNER bhi chala
+    // sakta hai — chahe wo us group me admin ho ya na ho (user ka order, 2026-10-31).
+    if (cmd.adminOnly && !(await H.isGroupAdmin(sock, chatId, sender)) && !isOwnerMsg(sock, msg, sender)) {
       await H.sendText(sock, chatId, '👮 Ye command sirf group admin chala sakte hain.', msg);
       return;
     }
