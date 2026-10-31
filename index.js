@@ -310,7 +310,7 @@ async function handleOne(sock, msg) {
 
     // gates
     if (cmd.ownerOnly && senderNum(sender) !== ownerNum()) {
-      await H.sendText(sock, chatId, '⛔ Ye command sirf bot owner ke liye hai.', msg);
+      await H.sendText(sock, chatId, 'Naa kare janab ye command sirf *its Mahtab* ke liye bana hua hai', msg);
       return;
     }
     if (cmd.groupOnly && !isGroup) {
