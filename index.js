@@ -121,7 +121,7 @@ const ABUSE_WORDS = [
   'chutiya', 'chutya', 'chutiye', 'chutia', 'chodu', 'chootiya', 'chutad',
   'gaandu', 'gandu', 'gandoo', 'gandmara', 'gaandmara', 'jhantu', 'jhaantu', 'jhaant', 'jhatu', 'jhaatu',
   // --- Lund / lauda family ---
-  'lauda', 'laude', 'loda', 'lode', 'lodu', 'lund', 'lundfakir', 'tatte', 'tatta',
+  'lauda', 'laude', 'loda', 'lode', 'lodu', 'lund', 'lnd', 'lundfakir', 'tatte', 'tatta',
   // --- Character par gaaliyan ---
   'randi', 'raand', 'gashti', 'bhadwa', 'bhadwe', 'bhadkhau', 'chhinal', 'chinal', 'chhinar', 'lanja', 'lanjakodaka',
   'harami', 'haraami', 'haramkhor', 'haramzada', 'haramzadi',
