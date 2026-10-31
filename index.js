@@ -267,7 +267,8 @@ const isOwnerMsg = (sock, msg, sender) => {
 // ek line me ruk-ruk ke hota tha. Koi sticker tez-tez bheje to pipeline peeche
 // pad jati aur kuch stickers bina delete hue nikal jate the.
 // Ab: pehchan turant (sync hash), delete ka kaam background me PARALLEL
-// (ek saath max 6, lambay retry ke saath), warning har delete par.
+// (ek saath max 6, lambay retry ke saath), warning 60s me 1 baar (spam-rok).
+const stickerWarnAt = new Map(); // `${chatId}:${sender}` -> aakhri warning ka time (60s me 1 warning)
 let stickerJobs = 0;
 const MAX_STICKER_JOBS = 6;
 
@@ -283,12 +284,17 @@ async function enforceStickerBan(sock, msg, chatId, sender, banned, knownHash) {
     const deleted = await H.deleteMessageForEveryone(sock, msg);
     if (deleted) {
       console.log(`🧩 banned sticker deleted: ${senderNum(sender)} in group`);
-      // Warning HAR delete par (user ki demand) — pehle 60s wala break tha,
-      // usi se baar-baar test me warning aani band ho gayi thi; hata diya.
-      await sock.sendMessage(chatId, {
-        text: `🚫 @${senderNum(sender)} ye sticker is group me banned hai!`,
-        mentions: [sender],
-      }).catch(() => {});
+      // Warning 60s me ek hi baar (user ka faisla): spam ke time warning rukegi,
+      // lekin DELETE har sticker ka hota rahega.
+      const wk = chatId + ':' + sender;
+      const now = Date.now();
+      if (now - (stickerWarnAt.get(wk) || 0) > 60000) {
+        stickerWarnAt.set(wk, now);
+        await sock.sendMessage(chatId, {
+          text: `🚫 @${senderNum(sender)} ye sticker is group me banned hai!`,
+          mentions: [sender],
+        }).catch(() => {});
+      }
     }
   } catch { /* ignore */ } finally {
     stickerJobs--;
