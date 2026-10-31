@@ -267,8 +267,7 @@ const isOwnerMsg = (sock, msg, sender) => {
 // ek line me ruk-ruk ke hota tha. Koi sticker tez-tez bheje to pipeline peeche
 // pad jati aur kuch stickers bina delete hue nikal jate the.
 // Ab: pehchan turant (sync hash), delete ka kaam background me PARALLEL
-// (ek saath max 6, retry ke saath), warning ek bande ko 60s me sirf ek baar.
-const stickerWarnAt = new Map(); // `${chatId}:${sender}` -> aakhri warning ka time
+// (ek saath max 6, lambay retry ke saath), warning har delete par.
 let stickerJobs = 0;
 const MAX_STICKER_JOBS = 6;
 
@@ -284,15 +283,12 @@ async function enforceStickerBan(sock, msg, chatId, sender, banned, knownHash) {
     const deleted = await H.deleteMessageForEveryone(sock, msg);
     if (deleted) {
       console.log(`🧩 banned sticker deleted: ${senderNum(sender)} in group`);
-      const wk = chatId + ':' + sender;
-      const now = Date.now();
-      if (now - (stickerWarnAt.get(wk) || 0) > 60000) {
-        stickerWarnAt.set(wk, now);
-        await sock.sendMessage(chatId, {
-          text: `🚫 @${senderNum(sender)} ye sticker is group me banned hai!`,
-          mentions: [sender],
-        }).catch(() => {});
-      }
+      // Warning HAR delete par (user ki demand) — pehle 60s wala break tha,
+      // usi se baar-baar test me warning aani band ho gayi thi; hata diya.
+      await sock.sendMessage(chatId, {
+        text: `🚫 @${senderNum(sender)} ye sticker is group me banned hai!`,
+        mentions: [sender],
+      }).catch(() => {});
     }
   } catch { /* ignore */ } finally {
     stickerJobs--;
@@ -607,10 +603,31 @@ async function startSock() {
       const flags = (upsert.messages || []).map((m) => (m.key.fromMe ? 'fromMe' : 'other')).join(',');
       console.log(`📥 upsert type=${upsert.type} count=${upsert.messages?.length || 0} [${flags}]`);
     } catch {}
-    if (upsert.type !== 'notify') return;
-    // Saare messages PARALLEL process karo — pehle ek line me rukte the, isiliye
-    // flood ke time bot peeche pad jata tha (speed fix, 2026-10-31).
-    await Promise.allSettled((upsert.messages || []).map((m) => handleOne(sock, m)));
+    if (upsert.type === 'notify') {
+      // Saare messages PARALLEL process karo — pehle ek line me rukte the, isiliye
+      // flood ke time bot peeche pad jata tha (speed fix, 2026-10-31).
+      await Promise.allSettled((upsert.messages || []).map((m) => handleOne(sock, m)));
+      return;
+    }
+    if (upsert.type === 'append') {
+      // ASLI SLIP YAHI THA: bulk/burst ke time kuch asli naye message WhatsApp
+      // 'append' kist me bhej deta hai — purana code use poora ignore kar deta tha,
+      // isiliye kuch banned sticker bach jate the. Ab append ke sirf TAAZA
+      // (120 second ke andar wale, dusro ke) message bhi check honge;
+      // purani history par haath nahi lagega.
+      const nowSec = Date.now() / 1000;
+      const fresh = (upsert.messages || []).filter((m) => {
+        if (!m.key || m.key.fromMe) return false;
+        const tsRaw = m.messageTimestamp;
+        const ts = typeof tsRaw === 'number' ? tsRaw
+          : (tsRaw && typeof tsRaw.toNumber === 'function' ? tsRaw.toNumber() : parseInt(tsRaw || '0', 10));
+        return ts && (nowSec - ts) < 120;
+      });
+      if (fresh.length) {
+        console.log(`📥 append kist me ${fresh.length} taaza message — enforcement check ho raha hai`);
+        await Promise.allSettled(fresh.map((m) => handleOne(sock, m)));
+      }
+    }
   });
 
   // welcome / goodbye
