@@ -11,7 +11,7 @@ const config = require('../config');
 
 const FAIL = '❌ Download fail ho gaya. Link sahi hai na? Koi dusra link try karo.';
 const HINT = '.dl <video link> bhejo';
-const DONE = '✅ Ho gaya! VIP MMD Bot';
+const DONE = '✅ Ho gaya! its Mahtab Bot';
 
 function qualityOf(text) {
   return /480/.test(String(text || '')) ? '480' : '720';

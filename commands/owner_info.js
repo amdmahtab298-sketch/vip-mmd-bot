@@ -1,4 +1,4 @@
-// owner_info.js — Info + Owner command set for VIP MMD Bot (Baileys v6, CommonJS)
+// owner_info.js — Info + Owner command set for its Mahtab Bot (Baileys v6, CommonJS)
 const H = require('../lib/helpers');
 const config = require('../config');
 const fs = require('fs');

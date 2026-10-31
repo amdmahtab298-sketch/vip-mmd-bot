@@ -1,4 +1,4 @@
-// VIP MMD Bot — main entry point (Baileys v6, CommonJS)
+// its Mahtab Bot — main entry point (Baileys v6, CommonJS)
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -379,7 +379,7 @@ async function startSock() {
     auth: state,
     logger: log,
     printQRInTerminal: false,
-    browser: ['VIP MMD Bot', 'Chrome', '1.0'],
+    browser: ['its Mahtab Bot', 'Chrome', '1.0'],
     // History sync BAND — warna connect hote hi saari purani chats sync hoti hain
     // aur free server par socket "503 Stream Errored" se mar jata hai
     // (2026-10-28 ke Render logs me connect ke 1s baad yahi hua tha).
@@ -430,7 +430,7 @@ async function startSock() {
         welcomed = true;
         const oj = ownerNum() + '@s.whatsapp.net';
         const txt =
-          `🤖 *VIP MMD Bot live ho gaya!* ✅\n\n` +
+          `🤖 *its Mahtab Bot live ho gaya!* ✅\n\n` +
           `Tumhara number ab bot se connected hai. Ab tum commands use kar sakte ho:\n\n` +
           `• \`${config.prefix}menu\` — saare ${allCommands.length} commands ki list\n` +
           `• \`${config.prefix}ping\` — bot online check\n` +
@@ -438,7 +438,7 @@ async function startSock() {
           `• \`${config.prefix}mp3 <link>\` — sirf audio\n` +
           `• \`${config.prefix}sticker\` — photo ka sticker\n` +
           `• \`${config.prefix}tagall\` — group me sabko tag\n\n` +
-          `Prefix \`${config.prefix}\` mat bhoolna!\nMade for VIP Shorts Creator 🎬`;
+          `Prefix \`${config.prefix}\` mat bhoolna!\nCreated BY its Mahtab`;
         sock.sendMessage(oj, { text: txt }).catch(() => console.log('welcome msg nahi gaya'));
       }
     }
@@ -492,7 +492,7 @@ async function startSock() {
   return sock;
 }
 
-console.log('🤖 VIP MMD Bot start ho raha hai...');
+console.log('🤖 its Mahtab Bot start ho raha hai...');
 function boot() {
   startSock().catch((e) => {
     // Pehli baar start fail ho to exit mat karo — retry karo (Render mail nahi bhejega)
@@ -556,9 +556,9 @@ button.ghost{background:#22222a;color:#ffd54a;border:1px solid #3a3a45;margin-to
 function pairingPage() {
   const num = String(config.pairingNumber || '').replace(/\D/g, '');
   return `<!DOCTYPE html><html lang="hi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>VIP MMD Bot — Pairing</title><style>${PAGE_CSS}</style></head><body>
+<title>its Mahtab Bot — Pairing</title><style>${PAGE_CSS}</style></head><body>
 <div class="card">
-  <div class="brand"><h1>🤖 VIP MMD Bot</h1><p>WhatsApp se connect karo — 2 minute me live!</p></div>
+  <div class="brand"><h1>🤖 its Mahtab Bot</h1><p>WhatsApp se connect karo — 2 minute me live!</p></div>
   <div style="text-align:center"><span class="status off" id="connStatus">● Bot abhi connected nahi hai</span></div>
   <div class="tabs">
     <button class="tab active" id="tab-code" onclick="showTab('code')">🔑 Pairing Code</button>
@@ -596,7 +596,7 @@ function pairingPage() {
     2️⃣ <b>Link a device</b> → <b>Link with phone number</b><br>
     3️⃣ Upar wala code daalo — ho gaya! ✅
   </div>
-  <div class="foot">Made for VIP Shorts Creator 🎬</div>
+  <div class="foot">Created BY its Mahtab</div>
 </div>
 <script>
 var cdTimer=null;
@@ -660,9 +660,9 @@ setInterval(function(){
 
 function dashboardPage() {
   return `<!DOCTYPE html><html lang="hi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>VIP MMD Bot — Online</title><style>${PAGE_CSS}</style></head><body>
+<title>its Mahtab Bot — Online</title><style>${PAGE_CSS}</style></head><body>
 <div class="card">
-  <div class="brand"><h1>🤖 VIP MMD Bot</h1><p>WhatsApp media downloader + 300+ commands</p></div>
+  <div class="brand"><h1>🤖 its Mahtab Bot</h1><p>WhatsApp media downloader + 300+ commands</p></div>
   <div style="text-align:center"><span class="status on">● Bot Online ✓</span></div>
   <div class="stats">
     <div class="stat"><div class="v">${allCommands.length}</div><div class="k">Total Commands</div></div>
@@ -671,7 +671,7 @@ function dashboardPage() {
     <div class="stat"><div class="v" style="font-size:15px">${maskNum(config.ownerNumber)}</div><div class="k">Owner</div></div>
   </div>
   <div class="steps">💡 Kisi bhi chat me <b>${config.prefix}menu</b> likho — saare commands ki list aa jayegi.<br>📥 Media download: <b>${config.prefix}dl &lt;link&gt;</b></div>
-  <div class="foot">Made for VIP Shorts Creator 🎬</div>
+  <div class="foot">Created BY its Mahtab</div>
 </div></body></html>`;
 }
 

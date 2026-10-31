@@ -1,9 +1,9 @@
-// VIP MMD Bot — configuration
+// its Mahtab Bot — configuration
 // Deploy se PEHLE ownerNumber aur pairingNumber me apna number daalo
 // (country code ke saath, bina + ke, e.g. '919876543210')
 module.exports = {
   prefix: '.',                  // command prefix, e.g. .dl .menu .tagall
-  botName: 'VIP MMD Bot',
+  botName: 'its Mahtab Bot',
   version: '1.0.0',
 
   ownerNumber: '9779714313486',   // <-- APNA number (owner-only commands isi ke liye)

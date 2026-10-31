@@ -1,5 +1,5 @@
 // ============================================================
-// VIP MMD Bot — Tools Commands (62 commands)
+// its Mahtab Bot — Tools Commands (62 commands)
 // category: Tools | PUBLIC-BY-DEFAULT (no admin/owner/group locks)
 // ============================================================
 const crypto = require('crypto');
