@@ -322,16 +322,18 @@ module.exports = [
   },
   {
     name: 'welcome', aliases: [], category: 'Group',
-    desc: 'Naye member welcome message on/off', usage: '.welcome on/off',
+    desc: 'Naye member welcome message on/off (default ON hai)', usage: '.welcome on/off',
     groupOnly: true, adminOnly: true,
     run: async (ctx) => {
       const { args, chatId, store, reply } = ctx;
-      if (args[0] === 'on') {
-        store.welcomeChats.add(chatId);
-        await reply('👋 Welcome message ON!');
+      if (args[0] === 'off') {
+        store.welcomeOffChats.add(chatId);
+        await KV.persistWelcomeOff();
+        await reply('👋 Welcome message OFF! (is group me ab naye member par welcome nahi aayega)');
       } else {
-        store.welcomeChats.delete(chatId);
-        await reply('👋 Welcome message OFF!');
+        store.welcomeOffChats.delete(chatId);
+        await KV.persistWelcomeOff();
+        await reply('👋 Welcome message ON! (waise ye default hi ON rehta hai)');
       }
     }
   },
@@ -340,7 +342,8 @@ module.exports = [
     desc: 'Welcome message band karo', usage: '.welcomeoff',
     groupOnly: true, adminOnly: true,
     run: async (ctx) => {
-      ctx.store.welcomeChats.delete(ctx.chatId);
+      ctx.store.welcomeOffChats.add(ctx.chatId);
+      await KV.persistWelcomeOff();
       await ctx.reply('👋 Welcome message OFF!');
     }
   },

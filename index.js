@@ -523,6 +523,8 @@ async function startSock() {
         try {
           const n = await KV.loadStickerBlocks();
           console.log(`🧩 Sticker blocklist loaded: ${n} group(s)`);
+          const w = await KV.loadWelcomeOff();
+          console.log(`👋 Welcome default ON (OFF wale groups: ${w})`);
         } catch (e) { console.log('sticker blocklist load fail:', e.message); }
       }
       console.log(`📜 ${allCommands.length} commands live — prefix "${config.prefix}"`);
@@ -580,12 +582,27 @@ async function startSock() {
   sock.ev.on('group-participants.update', async (u) => {
     try {
       const { id, participants, action } = u;
-      if (action === 'add' && store.welcomeChats.has(id)) {
-        const names = participants.map((p) => '@' + p.split('@')[0]).join(' ');
-        await sock.sendMessage(id, { text: `👋 Welcome ${names}!\n📌 Rules ke liye .rules likho.`, mentions: participants });
+      if (action === 'add' && !store.welcomeOffChats.has(id)) {
+        // Welcome har group me default ON hai (.welcome off se band hota hai).
+        // Participants naye Baileys me object ({id/lid/phoneNumber}) bhi ho sakte hain.
+        const meNum = (sock.user?.id || '').split('@')[0].split(':')[0];
+        const jids = (participants || [])
+          .map((p) => (typeof p === 'string' ? p : (p.phoneNumber || p.id || p.lid || '')))
+          .filter((j) => j && j.split('@')[0].split(':')[0] !== meNum);
+        if (jids.length) {
+          const names = jids.map((j) => '@' + j.split('@')[0]).join(' ');
+          await sock.sendMessage(id, {
+            text: `👋 Welcome ${names}!\n🎉 Group me aapka swagat hai!\n📌 Rules dekhne ke liye .rules likho, aur saare commands ke liye .help likho.`,
+            mentions: jids,
+          });
+          console.log(`👋 welcome bheja: ${jids.length} naye member, group ${id}`);
+        }
       } else if (action === 'remove' && store.goodbyeChats.has(id)) {
-        const names = participants.map((p) => '@' + p.split('@')[0]).join(' ');
-        await sock.sendMessage(id, { text: `👋 Alvida ${names}!` });
+        const names = (participants || [])
+          .map((p) => (typeof p === 'string' ? p : (p.phoneNumber || p.id || p.lid || '')))
+          .filter(Boolean)
+          .map((j) => '@' + j.split('@')[0]).join(' ');
+        if (names) await sock.sendMessage(id, { text: `👋 Alvida ${names}!` });
       }
     } catch { /* ignore */ }
   });
