@@ -179,6 +179,19 @@ const normJid = (jid = '') => {
 };
 const ownerNum = () => config.ownerNumber.replace(/\D/g, '');
 const senderNum = (sender) => normJid(sender).split('@')[0].replace(/\D/g, '');
+// Owner pehchan ke 3 tareeke: (1) number match, (2) fromMe — self-bot mode me bot
+// wala number hi owner ka hai, uske bheje message hamesha owner ke hain,
+// (3) bot ki apni LID — WhatsApp kabhi number ki jagah chhupi ID (LID) bhejta hai;
+// sirf number match karne par asal owner ko bhi bot rok deta tha (2026-10-31 bug).
+const isOwnerMsg = (sock, msg, sender) => {
+  try {
+    if (msg?.key?.fromMe) return true;
+    if (senderNum(sender) === ownerNum()) return true;
+    const lid = sock?.user?.lid;
+    if (lid && normJid(sender) === normJid(lid)) return true;
+  } catch { /* ignore */ }
+  return false;
+};
 
 // ---------------- per-message handler ----------------
 async function handleOne(sock, msg) {
@@ -250,7 +263,7 @@ async function handleOne(sock, msg) {
     // Admins aur owner exempt hain. Delete tabhi hoga jab bot group admin ho (WhatsApp rule).
     if (isGroup && !store.antiabuseOff.has(chatId) && !text.startsWith(config.prefix) && hasAbuse(text)) {
       const admin = await H.isGroupAdmin(sock, chatId, sender);
-      if (!admin && senderNum(sender) !== ownerNum()) {
+      if (!admin && !isOwnerMsg(sock, msg, sender)) {
         // FIX (2026-10-28): raw msg.key se delete sirf owner-wale group me chalta tha;
         // sirf-admin wale group me LID-wala key server reject kar deta tha. Ab helper
         // pehle asli number (participantAlt) se, fail ho to LID se delete try karta hai.
@@ -282,7 +295,7 @@ async function handleOne(sock, msg) {
           const hash = await H.stickerHash(sock, msg);
           if (hash && banned.has(hash)) {
             const admin = await H.isGroupAdmin(sock, chatId, sender);
-            if (!admin && senderNum(sender) !== ownerNum()) {
+            if (!admin && !isOwnerMsg(sock, msg, sender)) {
               const deleted = await H.deleteMessageForEveryone(sock, msg);
               if (deleted) {
                 console.log(`🧩 banned sticker deleted: ${senderNum(sender)} in group`);
@@ -309,7 +322,7 @@ async function handleOne(sock, msg) {
     const cmdText = text.slice(config.prefix.length + parts[0].length).trim();
 
     // gates
-    if (cmd.ownerOnly && senderNum(sender) !== ownerNum()) {
+    if (cmd.ownerOnly && !isOwnerMsg(sock, msg, sender)) {
       await H.sendText(sock, chatId, 'Naa kare janab ye command sirf *its Mahtab* ke liye bana hua hai', msg);
       return;
     }
