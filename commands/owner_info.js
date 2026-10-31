@@ -62,6 +62,7 @@ module.exports = [
     name: 'menu',
     aliases: ['allmenu'],
     category: 'Info',
+    ownerOnly: true, // user ka order (2026-10-31): menu sirf owner dekhega
     desc: 'Saare commands category-wise dekho.',
     usage: '.menu',
     run: async (ctx) => {
