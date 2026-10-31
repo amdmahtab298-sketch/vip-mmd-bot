@@ -114,16 +114,48 @@ module.exports = [
     usage: '.kawai <kuaishou link> bhejo',
     async run(ctx) {
       const { sock, chatId, msg, reply, args, text } = ctx;
-      const url = args[0];
+      // Link me https:// na ho to khud jod do (bina iske fetch 'Invalid URL' deta hai)
+      const url = args[0] && !/^https?:\/\//i.test(args[0]) ? 'https://' + args[0] : args[0];
       if (!url) { await reply('📥 Pehle link to bhejo!\nUsage: .kawai <kuaishou link>'); return; }
+      // Live status: ek hi message edit hoke progress dikhata hai —
+      // kitna download hua, kitna bacha; fail ho to wahi message bata dega.
+      let status = null;
+      const setStatus = async (t) => {
+        try {
+          if (!status) status = await sock.sendMessage(chatId, { text: t }, { quoted: msg });
+          else if (status.key) await sock.sendMessage(chatId, { text: t, edit: status.key });
+        } catch { /* edit na chale to chup — asal video/fail waise hi jayega */ }
+      };
+      let lastPct = -20;
       try {
+        await setStatus('⏳ Download shuru ho raha hai...\n🔍 Link se video dhoondh raha hoon');
+        const onProgress = (p) => {
+          if (p.stage === 'download' && p.total > 0) {
+            const pct = Math.floor((p.loaded / p.total) * 100);
+            if (pct >= lastPct + 15 || pct === 100) {
+              lastPct = pct;
+              const filled = Math.round(pct / 10);
+              const bar = '█'.repeat(filled) + '░'.repeat(10 - filled);
+              setStatus(`⬇️ Download ho raha hai...\n${bar} ${pct}%\n📦 ${(p.loaded / 1048576).toFixed(1)} MB / ${(p.total / 1048576).toFixed(1)} MB`);
+            }
+          }
+        };
         // Pehle direct — ek hi page fetch + seedha CDN download = sabse fast.
-        let r = await cobalt.kwaiDirect(url);
-        if (!r || !r.buffer) r = await cobalt.cobaltDownload(url, { quality: qualityOf(text) });
-        if (!r || !r.buffer) { await reply(FAIL); return; }
+        let r = await cobalt.kwaiDirect(url, onProgress);
+        if (!r || !r.buffer) {
+          await setStatus('🔄 Direct tareeka nahi chala — dusra tareeka try kar raha hoon...');
+          r = await cobalt.cobaltDownload(url, { quality: qualityOf(text) });
+        }
+        if (!r || !r.buffer) {
+          await setStatus('❌ Download fail ho gaya.\nLink sahi hai na? Koi dusra link try karo.');
+          return;
+        }
+        await setStatus('⬆️ Download pura ho gaya! Video bhej raha hoon...');
         await H.sendVideo(sock, chatId, r.buffer, DONE, msg);
+        await setStatus('✅ Ho gaya! Video bhej diya hai 👆');
       } catch (e) {
-        await reply(FAIL);
+        try { await setStatus('❌ Download fail ho gaya.\nKoi dusra link try karo.'); }
+        catch { await reply(FAIL); }
       }
     }
   },
