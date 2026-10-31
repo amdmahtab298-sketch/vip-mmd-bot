@@ -105,20 +105,21 @@ module.exports = [
     async run(ctx) { await cobaltUrl(ctx, true); }
   },
 
-  /* ---- kwai: cobalt first, direct fallback ---- */
+  /* ---- kwai/kawai: DIRECT tareeka pehle (sabse tez), cobalt fallback ---- */
   {
     name: 'kwai',
-    aliases: [],
+    aliases: ['kawai', 'kuaishou'],
     category: 'Downloader',
-    desc: 'Kwai/Kuaishou video download',
-    usage: '.kwai <kwai link> bhejo',
+    desc: 'Kwai/Kuaishou video download (high quality, direct)',
+    usage: '.kawai <kuaishou link> bhejo',
     async run(ctx) {
       const { sock, chatId, msg, reply, args, text } = ctx;
       const url = args[0];
-      if (!url) { await reply('📥 Pehle link to bhejo!\nUsage: .kwai <kwai link>'); return; }
+      if (!url) { await reply('📥 Pehle link to bhejo!\nUsage: .kawai <kuaishou link>'); return; }
       try {
-        let r = await cobalt.cobaltDownload(url, { quality: qualityOf(text) });
-        if (!r || !r.buffer) r = await cobalt.kwaiDirect(url);
+        // Pehle direct — ek hi page fetch + seedha CDN download = sabse fast.
+        let r = await cobalt.kwaiDirect(url);
+        if (!r || !r.buffer) r = await cobalt.cobaltDownload(url, { quality: qualityOf(text) });
         if (!r || !r.buffer) { await reply(FAIL); return; }
         await H.sendVideo(sock, chatId, r.buffer, DONE, msg);
       } catch (e) {
