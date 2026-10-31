@@ -180,8 +180,8 @@ function hasAbuse(text) {
 // English shabd hai) — poora naam kisi bhi version me (space/dot/leet/double akshar)
 // aaye tabhi hit hoga.
 const SAVAGE_NAMES = [
-  { tag: 'mia', forms: ['miakhalifa', 'miyakhalifa'] },
-  { tag: 'johnny', forms: ['johnnysins', 'johnysins', 'johnnysin', 'johnysin'] },
+  { tag: 'mia', forms: ['miakhalifa', 'miyakhalifa', 'miakalifa', 'miyakalifa'] },
+  { tag: 'johnny', forms: ['johnnysins', 'johnysins', 'johnnysin', 'johnysin', 'jhonnysins', 'jhonysins', 'jhonnysin', 'jhonysin', 'jonysins', 'jonysin'] },
 ];
 const SAVAGE_REPLIES = {
   mia: [
