@@ -55,7 +55,43 @@ async function doBroadcast(ctx, groupsOnly) {
   try { await reply('📢 ' + n + (groupsOnly ? ' groups' : ' chats') + ' me bheja!'); } catch (e) {}
 }
 
-const RULES_TEXT = '📋 Rules:\n1. Spam mat karo\n2. Illegal content mat bhejo\n3. Admin ke instructions follow karo\n4. Masti karo, pareshan nahi!';
+const RULES_TEXT = `🎉 *MASTI GROUP* 🎉
+*— Group Rules —*
+Masti karo, dil khol ke karo… bas ye rules dhyaan me rakho 👇
+
+1️⃣ *Gaali-galoj bilkul nahi* 🤬
+Gaali wala message bot khud delete kar dega + warning milegi. Baar-baar karne par admin action lega.
+
+2️⃣ *Spam / flood nahi* 🚫
+Ek saath tez-tez message ya ek hi baat baar-baar mat bhejo. Flood par warning milegi, teesri baar 10 minute tak tumhare message auto-delete honge.
+
+3️⃣ *Bina permission link nahi* 🔗
+Koi bhi link, promotion ya apne channel/group ka prachar admin ki permission ke bina mat daalo — delete ho jayega.
+
+4️⃣ *Sticker spam nahi* 🎭
+Ek saath dher saare sticker mat bhejo. Kuch stickers group me banned hain — bhejte hi delete ho jayenge.
+
+5️⃣ *Sabse respect se baat karo* 🤝
+Kisi ki insult, personal attack ya ladai-jhagda nahi. Behes ho to admin ko bulao, khud judge mat bano.
+
+6️⃣ *Personal cheezein share nahi* 🔒
+Kisi ka number, photo ya private baat bina uski permission ke group me mat daalo.
+
+7️⃣ *Adult / 18+ content nahi* 🔞
+Aisi photo, video ya baat bilkul nahi — sidha delete + warning.
+
+8️⃣ *Ladai wale topic nahi* ✌️
+Dharm, rajneeti ya kisi par bhi ladai karne wale post mat daalo. Group masti ke liye hai, Mahabharat ke liye nahi 😄
+
+9️⃣ *Admin ka faisla aakhiri* 👑
+Admin ki baat maano. Koi dikkat ho to shanti se admin ko personally bolo.
+
+🏆 *Points:* Group me active rehne par points milte hain!
+*.points* — apne points | *.top* — leaderboard
+
+⚠️ *Note:* Rule todne par pehle warning milegi, phir bhi na maane to group se bahar.
+
+— *MASTI GROUP Admin Team* 🙏`;
 
 module.exports = [
   {
