@@ -136,6 +136,8 @@ const ABUSE_WORDS = [
   'khanki', 'bokachoda', 'bokachod', 'shuorer bachcha',
   // --- Bhojpuri (bokichodi family — stem rakha hai, isse bokichodi/bokichoda/bokichodwa sab pakde jayenge) ---
   'bokichod', 'bokichhod', 'bokichud',
+  // --- Bakchodi family (owner ke kehne par — aam mazak wala 'bakchodi mat kar' bhi pakda jayega) ---
+  'bakchod', 'backchod', 'bakchhod', 'bakchud',
   // --- Marathi ---
   'zavnya', 'zhavnya', 'aaichi gaand',
   // --- South ---
@@ -151,7 +153,7 @@ const ABUSE_WORDS = [
   'teri maa ki chut', 'maa ki chut', 'son of a bitch',
   // --- Hindi (Devanagari) ---
   'मादरचोद', 'बहनचोद', 'भोसड़ी', 'भोसड़ा', 'चूतिया', 'गांडू', 'रंडी', 'हरामी', 'लौड़ा',
-  'कमीना', 'नालायक', 'बेवकूफ', 'भड़वा', 'कंजर', 'बोकिचोद', 'बोकिचोदी', 'बोकिचोड़ा',
+  'कमीना', 'नालायक', 'बेवकूफ', 'भड़वा', 'कंजर', 'बोकिचोद', 'बोकिचोदी', 'बोकिचोड़ा', 'बकचोद', 'बकचोदी',
 ];
 const ABUSE_SHORT = ['bc', 'mc', 'kys', 'stfu', 'gtfo']; // abbreviations — sirf whole-word match
 // Ye shabd sirf POORE word ke roop me aaye tabhi delete honge (substring par bekasoor shabd udte):
