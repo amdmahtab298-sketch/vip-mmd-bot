@@ -1,6 +1,7 @@
 // Group management commands — 43 commands
 const H = require('../lib/helpers');
 const KV = require('../lib/kv');
+const AI = require('../lib/ai');
 const crypto = require('crypto');
 
 function targetFrom(msg, args) {
@@ -427,6 +428,48 @@ module.exports = [
         store.engageOn.add(chatId);
         await KV.persistSet('settings:engageOn', store.engageOn);
         await reply('🎯 Auto-engage ON!\n🌅 Subah 8:00 — Good morning message\n🧠 Dopahar 1:00 — Quiz poll\n🏆 Raat 8:00 — Aaj ke sabse active member ka elaan');
+      }
+    }
+  },
+  {
+    name: 'ytupdate', aliases: ['ytupdates'], category: 'Group',
+    desc: 'YouTube update alert on/off — naya YouTube update aate hi bot AI ke saar ke saath group me bhej dega', usage: '.ytupdate on/off',
+    groupOnly: true, adminOnly: true,
+    run: async (ctx) => {
+      const { args, chatId, store, reply } = ctx;
+      if (args[0] === 'off') {
+        store.ytUpdateOn.delete(chatId);
+        await KV.persistSet('settings:ytUpdateOn', store.ytUpdateOn);
+        await reply('📺 YouTube update alert OFF!');
+      } else {
+        store.ytUpdateOn.add(chatId);
+        await KV.persistSet('settings:ytUpdateOn', store.ytUpdateOn);
+        await reply('📺 YouTube update alert ON!\nAb jab bhi YouTube koi naya update/feature layega, bot khud official khabar padh ke AI ke Hinglish saar ke saath yahan bhej dega — sabse pehle tumhe pata chalega! 🚨');
+      }
+    }
+  },
+  {
+    name: 'aiquiz', aliases: ['ytquiz'], category: 'Group',
+    desc: 'Abhi ke abhi AI se ek fresh YouTube quiz poll banao', usage: '.aiquiz',
+    groupOnly: true, adminOnly: true,
+    run: async (ctx) => {
+      const { sock, chatId, reply } = ctx;
+      await reply('🧠 AI se fresh YouTube quiz ban raha hai, ek second...');
+      const hist = await KV.loadQuizHist();
+      const q = await AI.genQuiz(hist);
+      if (q) {
+        await KV.saveQuizHist(q.q, hist);
+        await sock.sendMessage(chatId, { poll: { name: '🧠 YouTube Quiz: ' + q.q, values: q.options, selectableCount: 1 } });
+      } else {
+        // AI band/fail — purana bank wala sawal, aur wajah bhi bata do
+        const bank = [
+          { q: 'YouTube kab launch hua tha?', o: ['2005', '2007', '2003', '2010'] },
+          { q: 'YouTube ko Google ne kitne me kharida tha?', o: ['$1.65 Billion', '$500 Million', '$3 Billion', '$850 Million'] },
+          { q: 'Pehla YouTube video kaun sa tha?', o: ['Me at the Zoo', 'Hello World', 'My First Video', 'San Diego Trip'] },
+        ];
+        const b = bank[Math.floor(Math.random() * bank.length)];
+        await sock.sendMessage(chatId, { poll: { name: '🧠 Quiz: ' + b.q, values: b.o, selectableCount: 1 } });
+        await reply(AI.enabled() ? '(AI se jawab nahi aaya, bank wala sawal diya hai — thodi der baad phir try karo)' : '(Note: AI abhi ON nahi hai — key lagte hi har quiz AI se fresh banega)');
       }
     }
   },

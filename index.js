@@ -20,6 +20,7 @@ const { toStickerBuffer } = require('./lib/sticker');
 const KV = require('./lib/kv'); // MMD bot ka apna online storage (alag Supabase project)
 const { useSupabaseAuthState } = require('./lib/supaAuth');
 const { welcomeCard } = require('./lib/card');
+const AI = require('./lib/ai'); // Gemini AI: YouTube quiz + update alerts (key na ho to OFF)
 let supaAuth = null; // DB-backed auth state (logout par clear karne ke liye)
 
 const log = pino({ level: 'silent' });
@@ -741,8 +742,10 @@ async function startSock() {
           store.nightOn = new Set(await KV.loadSet('settings:nightOn'));
           store.nightLocked = new Set(await KV.loadSet('settings:nightLocked'));
           store.engageOn = new Set(await KV.loadSet('settings:engageOn'));
+          store.ytUpdateOn = new Set(await KV.loadSet('settings:ytUpdateOn'));
           const lm = await KV.loadLidMap();
           console.log(`🛡️ Guard settings loaded: night=${store.nightOn.size}, engage=${store.engageOn.size}, antiforward=${store.antiforwardOn.size} group(s), LID mapping=${lm}`);
+          console.log(AI.enabled() ? '🤖 AI features: ON (Gemini) — YouTube quiz + update alerts chalenge' : '🤖 AI features: OFF (GEMINI_API_KEY nahi hai) — quiz bank se chalega, update alerts band');
         } catch (e) { console.log('sticker blocklist load fail:', e.message); }
       }
       console.log(`📜 ${allCommands.length} commands live — prefix "${config.prefix}"`);
@@ -918,6 +921,56 @@ const ENGAGE_QUIZ = [
   { q: 'Gol gappe, tikki ya dahi bhalla — sabse best chaat?', o: ['Gol Gappe', 'Aloo Tikki', 'Dahi Bhalla', 'Papdi Chaat'] },
 ];
 
+// Din ka AI quiz — Gemini se fresh YouTube sawal; AI band/fail ho to purana bank.
+// Sawal itihaas me save hota hai taaki AI agle din repeat na kare.
+let quizCache = { date: '', poll: null };
+async function buildDailyQuiz() {
+  try {
+    const hist = await KV.loadQuizHist();
+    const q = await AI.genQuiz(hist);
+    if (q) {
+      await KV.saveQuizHist(q.q, hist);
+      console.log('🧠 AI quiz bana:', q.q);
+      return { name: '🧠 Aaj ka YouTube Quiz: ' + q.q, values: q.options, selectableCount: 1 };
+    }
+  } catch (e) { console.log('AI quiz fail, bank use hoga:', e.message); }
+  const b = ENGAGE_QUIZ[Math.floor(Math.random() * ENGAGE_QUIZ.length)];
+  return { name: '🧠 Aaj ka Quiz: ' + b.q, values: b.o, selectableCount: 1 };
+}
+
+// YouTube update watcher — official blog + Creator Insider check karke nayi
+// khabar ko AI-Hinglish saar ke saath .ytupdate wale groups me bhejta hai.
+// Pehli baar sirf baseline banta hai (purani khabrein flood nahi hongi).
+let lastYtCheck = 0;
+async function checkYtUpdates(sock) {
+  const seen = await KV.loadYtSeen();
+  const seenSet = new Set(seen.ids || []);
+  const fresh = [];
+  for (const feed of AI.FEEDS) {
+    const items = await AI.fetchFeedItems(feed.url, 5);
+    for (const it of items) {
+      if (!seenSet.has(it.id)) { fresh.push({ ...it, source: feed.name }); seenSet.add(it.id); }
+    }
+  }
+  if (!seen.seeded) {
+    await KV.saveYtSeen({ seeded: true, ids: [...seenSet].slice(-60) });
+    console.log(`📺 YouTube watcher baseline set (${seenSet.size} purani khabrein) — ab se sirf NAYI updates jayengi`);
+    return;
+  }
+  await KV.saveYtSeen({ seeded: true, ids: [...seenSet].slice(-60) });
+  if (!fresh.length || !store.ytUpdateOn.size) return;
+  fresh.sort((a, b) => String(a.published).localeCompare(String(b.published)));
+  const toSend = fresh.slice(-2); // ek check me zyada se zyada 2 alert (spam rok)
+  for (const item of toSend) {
+    const summary = await AI.summarizeUpdate(item);
+    const text = `🚨 *YouTube Update!* 📺\n(${item.source})\n\n📌 *${item.title}*${summary ? `\n\n${summary}` : ''}\n\n🔗 ${item.link}`;
+    for (const chatId of store.ytUpdateOn) {
+      await sock.sendMessage(chatId, { text }).catch(() => {});
+    }
+    console.log('📺 YouTube update bheja:', item.title);
+  }
+}
+
 setInterval(async () => {
   const sock = activeSock;
   if (!sock) return;
@@ -961,6 +1014,12 @@ setInterval(async () => {
       await KV.persistLidMap();
     }
 
+    // ---- YouTube update check (har ~30 min, sirf koi group ON ho tab) ----
+    if (store.ytUpdateOn.size && Date.now() - lastYtCheck > 30 * 60 * 1000) {
+      lastYtCheck = Date.now();
+      await checkYtUpdates(sock).catch((e) => console.log('yt check fail:', e.message));
+    }
+
     // ---- Auto-Engage: 8 baje good morning, 1 baje quiz, 8 baje (raat) active member ----
     const dateKey = istDateStr();
     const slots = [
@@ -978,8 +1037,11 @@ setInterval(async () => {
           if (slot.key === 'gm') {
             await sock.sendMessage(chatId, { text: '🌅 *Good Morning dosto!* ☀️\nAaj ka din mast jaye! Group me active raho, points kamao aur .top me apna naam banao! 🏆' });
           } else if (slot.key === 'quiz') {
-            const q = ENGAGE_QUIZ[Math.floor(Math.random() * ENGAGE_QUIZ.length)];
-            await sock.sendMessage(chatId, { poll: { name: '🧠 Aaj ka Quiz: ' + q.q, values: q.o, selectableCount: 1 } });
+            // Din bhar ke saare groups ke liye EK hi quiz (AI se fresh, warna bank)
+            if (quizCache.date !== dateKey || !quizCache.poll) {
+              quizCache = { date: dateKey, poll: await buildDailyQuiz() };
+            }
+            await sock.sendMessage(chatId, { poll: quizCache.poll });
           } else {
             const pMap = await KV.loadPoints(chatId);
             let best = null;
