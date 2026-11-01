@@ -358,6 +358,7 @@ async function enforceStickerBan(sock, msg, chatId, sender, banned, knownHash) {
 const floodHits = new Map();    // `${chatId}:${sender}` -> [message timestamps] (10s khidki)
 const floodStrikes = new Map(); // `${chatId}:${sender}` -> { n, firstAt } (1 ghante me gintee)
 const shadowMute = new Map();   // `${chatId}:${sender}` -> mute khatm hone ka time (ms)
+const abuseSpam = new Map();    // `${chatId}:${sender}` -> { until, stage } — gaali-saza seedhi wala spam (stage 1=1h, 2=3h, 3=5h)
 const afNoteAt = new Map();     // 'af:'+chatId -> anti-forward notice ka aakhri time
 let activeSock = null;          // scheduler (night mode/engage) ke liye taaza socket
 
@@ -461,6 +462,15 @@ async function handleOne(sock, msg) {
       }
       if (muteUntil) shadowMute.delete(gKey);
 
+      // ---- gaali-saza wala spam: is dauran bande ke saare message delete honge,
+      // LEKIN gaali wala message aage jayega — taaki saza ki seedhi aage badh sake ----
+      const spamRec = abuseSpam.get(gKey);
+      if (spamRec) {
+        if (spamRec.until > Date.now()) {
+          if (!hasAbuse(text)) { H.deleteMessageForEveryone(sock, msg).catch(() => {}); return; }
+        } else abuseSpam.delete(gKey);
+      }
+
       // ---- flood control: 10 second me 7+ text/sticker (default ON) ----
       const innerG = H.unwrap(msg);
       const floodable = text.length > 0 || !!innerG?.stickerMessage;
@@ -559,10 +569,68 @@ async function handleOne(sock, msg) {
           rec.count++;
           store.abuseWarns.set(key, rec);
           console.log(`🚫 abuse deleted: ${senderNum(sender)} in group (warning ${rec.count})`);
-          await sock.sendMessage(chatId, {
-            text: `🚫 @${senderNum(sender)} gaali-galoj allowed nahi hai! Message delete kar diya gaya. (Warning ${rec.count})`,
-            mentions: [sender],
-          }).catch(() => {});
+          // ---- Gaali-saza SEEDHI (sirf .abusepunish ON wale groups me) ----
+          // 10 se zyada gaali = 1 ghante ka SPAM (saare message auto-delete).
+          // Spam ke dauran phir gaali = spam 3 ghante, phir 5 ghante, chauthi
+          // baar = rule-todne ka sandesh + group se REMOVE. Spam khatm ho jaye
+          // to seedhi bhi reset — phir se 10 gaali par hi lagegi.
+          let ladderHandled = false;
+          if (store.abusePunishOn.has(chatId)) {
+            let sp = abuseSpam.get(key);
+            if (sp && sp.until <= now) { abuseSpam.delete(key); sp = null; }
+            if (sp) {
+              ladderHandled = true;
+              if (sp.stage === 1) {
+                abuseSpam.set(key, { until: now + 3 * 60 * 60000, stage: 2 });
+                await sock.sendMessage(chatId, {
+                  text: `🚨 @${senderNum(sender)} SPAM lage hue hone ke baad bhi phir gaali!\nTumhara spam ab *3 ghante* ke liye badha diya gaya hai.\n⚠️ Ek aur gaali par spam *5 ghante* ho jayega — uske baad seedha group se REMOVE hoge.`,
+                  mentions: [sender],
+                }).catch(() => {});
+                console.log(`🚨 abuse ladder stage 2 (3h spam): ${senderNum(sender)}`);
+              } else if (sp.stage === 2) {
+                abuseSpam.set(key, { until: now + 5 * 60 * 60000, stage: 3 });
+                await sock.sendMessage(chatId, {
+                  text: `🚨 @${senderNum(sender)} phir gaali! Tumhara spam ab *5 ghante* ke liye badha diya gaya hai.\n⚠️⚠️ Ye AAKHRI chetaavni hai — ek aur gaali par tumhe group se REMOVE kar diya jayega.`,
+                  mentions: [sender],
+                }).catch(() => {});
+                console.log(`🚨 abuse ladder stage 3 (5h spam): ${senderNum(sender)}`);
+              } else {
+                await sock.sendMessage(chatId, {
+                  text: `⛔ @${senderNum(sender)} tumne baar-baar group ke RULES tode hain — pehle 10 se zyada gaali, phir spam lage hue hone ke baad bhi baar-baar gaali.\nIsliye tumhe group se *REMOVE* kiya ja raha hai.`,
+                  mentions: [sender],
+                }).catch(() => {});
+                const removed = await sock.groupParticipantsUpdate(chatId, [sender], 'remove').then(() => true).catch(() => false);
+                if (removed) {
+                  abuseSpam.delete(key);
+                  store.abuseWarns.delete(key);
+                  console.log(`⛔ abuse ladder REMOVE: ${senderNum(sender)}`);
+                } else {
+                  // Bot admin nahi hai — remove nahi ho paya; spam phir 5 ghante + adminon ko khabar
+                  abuseSpam.set(key, { until: now + 5 * 60 * 60000, stage: 3 });
+                  await sock.sendMessage(chatId, {
+                    text: `⚠️ @${senderNum(sender)} ko remove karna tha lekin bot is group me admin nahi hai — isliye spam 5 ghante ke liye phir laga diya gaya hai. Koi admin inhe group se hata de.`,
+                    mentions: [sender],
+                  }).catch(() => {});
+                  console.log(`⛔ abuse ladder remove FAIL (bot admin nahi): ${senderNum(sender)}`);
+                }
+              }
+            } else if (rec.count > 10) {
+              ladderHandled = true;
+              abuseSpam.set(key, { until: now + 60 * 60000, stage: 1 });
+              store.abuseWarns.set(key, { count: 0, firstAt: now }); // spam ke baad ginati nayi sirre se
+              await sock.sendMessage(chatId, {
+                text: `🚨 @${senderNum(sender)} tumne group me *10 se zyada baar gaali* di hai!\nAb tumhare number par *1 ghante ke liye SPAM* laga diya gaya hai — is dauran tumhare saare message auto-delete honge.\n⚠️ Spam ke dauran phir gaali di to spam *3 ghante*, phir *5 ghante* ho jayega — aur phir bhi gaali di to group se *REMOVE* kar diye jaoge.`,
+                mentions: [sender],
+              }).catch(() => {});
+              console.log(`🚨 abuse ladder stage 1 (1h spam): ${senderNum(sender)}`);
+            }
+          }
+          if (!ladderHandled) {
+            await sock.sendMessage(chatId, {
+              text: `🚫 @${senderNum(sender)} gaali-galoj allowed nahi hai! Message delete kar diya gaya. (Warning ${rec.count})`,
+              mentions: [sender],
+            }).catch(() => {});
+          }
         }
         return;
       }
@@ -743,6 +811,7 @@ async function startSock() {
           store.nightLocked = new Set(await KV.loadSet('settings:nightLocked'));
           store.engageOn = new Set(await KV.loadSet('settings:engageOn'));
           store.ytUpdateOn = new Set(await KV.loadSet('settings:ytUpdateOn'));
+          store.abusePunishOn = new Set(await KV.loadSet('settings:abusePunishOn'));
           const lm = await KV.loadLidMap();
           console.log(`🛡️ Guard settings loaded: night=${store.nightOn.size}, engage=${store.engageOn.size}, antiforward=${store.antiforwardOn.size} group(s), LID mapping=${lm}`);
           console.log(AI.enabled() ? '🤖 AI features: ON (Gemini) — YouTube quiz + update alerts chalenge' : '🤖 AI features: OFF (GEMINI_API_KEY nahi hai) — quiz bank se chalega, update alerts band');

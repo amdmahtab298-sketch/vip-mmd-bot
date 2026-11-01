@@ -432,6 +432,23 @@ module.exports = [
     }
   },
   {
+    name: 'abusepunish', aliases: ['gaalisaza'], category: 'Group',
+    desc: 'Gaali-saza seedhi on/off — 10+ gaali = 1h spam, phir 3h, phir 5h, phir group se remove', usage: '.abusepunish on/off',
+    groupOnly: true, adminOnly: true,
+    run: async (ctx) => {
+      const { args, chatId, store, reply } = ctx;
+      if (args[0] === 'off') {
+        store.abusePunishOn.delete(chatId);
+        await KV.persistSet('settings:abusePunishOn', store.abusePunishOn);
+        await reply('⚖️ Gaali-saza seedhi OFF! Ab is group me sirf delete + warning chalega (purana system).');
+      } else {
+        store.abusePunishOn.add(chatId);
+        await KV.persistSet('settings:abusePunishOn', store.abusePunishOn);
+        await reply('⚖️ Gaali-saza seedhi ON!\nIs group me ab ye niyam chalega:\n• *10 se zyada gaali* = 1 ghante ka SPAM (saare message auto-delete)\n• Spam ke dauran phir gaali = spam *3 ghante*\n• Phir gaali = spam *5 ghante*\n• Phir bhi gaali = rule-todne ka sandesh + group se *REMOVE*\n(Admin aur owner isse bahar hain. Remove ke liye bot ka group admin hona zaroori hai.)');
+      }
+    }
+  },
+  {
     name: 'ytupdate', aliases: ['ytupdates'], category: 'Group',
     desc: 'YouTube update alert on/off — naya YouTube update aate hi bot AI ke saar ke saath group me bhej dega', usage: '.ytupdate on/off',
     groupOnly: true, adminOnly: true,
