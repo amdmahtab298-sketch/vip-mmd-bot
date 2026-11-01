@@ -119,12 +119,13 @@ const ABUSE_WORDS = [
   'behen ke laude', 'behen ke lode', 'maa ke laude', 'maa ke lode', 'behen ka lauda', 'maa ka lauda',
   // --- Bhosdi / chutiya / gaand family ---
   'bhosdi', 'bhosda', 'bhosdo', 'bhosdika', 'bhosdike', 'bhosdiwala', 'bhosad',
-  'bhosd', 'bosdi', 'bosda', 'bhosadi', 'bhosde', 'bsdke',
+  'bhosd', 'bosdi', 'bosda', 'bhosadi', 'bhosde', 'bsdke', 'bhsdi', 'bhonsdi', 'bhosdiwale',
   'chutiya', 'chutya', 'chutiye', 'chutia', 'chodu', 'chootiya', 'chutad',
   'gaandu', 'gandu', 'gandoo', 'gandmara', 'gaandmara', 'jhantu', 'jhaantu', 'jhaant', 'jhatu', 'jhaatu',
   'jhaat', 'jhaath', 'jhath', 'jhaathuchand', 'jhathuchand', 'jhatuchand',
   // --- Lund / lauda family ---
   'lauda', 'laude', 'loda', 'lode', 'lodu', 'lund', 'lnd', 'lundfakir', 'tatte', 'tatta',
+  'lavda', 'lavde', 'lavdu', 'lavdaa', 'laudaa',
   // --- Character par gaaliyan ---
   'randi', 'raand', 'gashti', 'bhadwa', 'bhadwe', 'bhadkhau', 'chhinal', 'chinal', 'chhinar', 'lanja', 'lanjakodaka',
   'harami', 'haraami', 'haramkhor', 'haramzada', 'haramzadi',
@@ -159,8 +160,13 @@ const ABUSE_WORDS = [
 const ABUSE_SHORT = ['bc', 'mc', 'kys', 'stfu', 'gtfo']; // abbreviations — sirf whole-word match
 // Ye shabd sirf POORE word ke roop me aaye tabhi delete honge (substring par bekasoor shabd udte):
 const ABUSE_WHOLE = ['chut', 'gaand', 'gand', 'land', 'landa', 'lulla', 'lulli', 'gadha', 'suar', 'dick', 'cock', 'pussy', 'hoe', 'thot', 'prick', 'ass', 'bur', 'jhat'];
+// Dusri bhashaon ke dikhne-me-ek-jaise akshar (Cyrillic/Greek) — 'lаuda' wali chaal ke liye.
+const ABUSE_HOMO = { 'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'х': 'x', 'у': 'y', 'к': 'k', 'м': 'm', 'н': 'h', 'т': 't', 'в': 'b', 'ё': 'e', 'і': 'i', 'ј': 'j', 'ѕ': 's', 'α': 'a', 'ο': 'o', 'ε': 'e', 'ι': 'i', 'κ': 'k', 'ν': 'v', 'ρ': 'p', 'τ': 't', 'υ': 'u', 'χ': 'x' };
 function normalizeAbuseText(s) {
-  let t = String(s).toLowerCase().replace(/@/g, 'a').replace(/\$/g, 's');
+  // NFKC: full-width akshar (ｌａｕｄａ) seedhe ASCII ban jate hain; zero-width
+  // chhupe nishaan neeche wale strip me ud jate hain (akshar/ank nahi hain wo).
+  let t = String(s).normalize('NFKC').toLowerCase().replace(/@/g, 'a').replace(/\$/g, 's');
+  t = t.replace(/[а-яёα-ωіјѕ]/g, (ch) => ABUSE_HOMO[ch] || ch);
   t = t.replace(/[^\p{L}\p{N}]/gu, '');
   return t.replace(/0/g, 'o').replace(/1/g, 'i').replace(/3/g, 'e').replace(/4/g, 'a').replace(/5/g, 's').replace(/7/g, 't');
 }
@@ -557,7 +563,11 @@ async function handleOne(sock, msg) {
     // Har gaali par: message delete + warning count badhta hai (24h me reset).
     // NOTE: user ke kehne par auto-REMOVE hata diya gaya hai (2026-10-28) — sirf delete+warn.
     // Admins aur owner exempt hain. Delete tabhi hoga jab bot group admin ho (WhatsApp rule).
-    if (isGroup && !store.antiabuseOff.has(chatId) && !text.startsWith(config.prefix) && hasAbuse(text)) {
+    // DOT-BYPASS BAND (2026-11-01): pehle '.' se shuru message is jaanch se bilkul
+    // bahar tha — members ne '.Lauda' '.bsdk' likh ke wahi chhed pakad liya. Ab
+    // sirf ASLI registered command bahar hai; nakli 'command' wali gaali bhi kategi.
+    const dotCmd = text.startsWith(config.prefix) ? (text.slice(config.prefix.length).trim().split(/\s+/)[0] || '').toLowerCase() : '';
+    if (isGroup && !store.antiabuseOff.has(chatId) && !(dotCmd && registry.has(dotCmd)) && hasAbuse(text)) {
       const admin = await H.isGroupAdmin(sock, chatId, sender);
       if (!admin && !isOwnerMsg(sock, msg, sender)) {
         // FIX (2026-10-28): raw msg.key se delete sirf owner-wale group me chalta tha;
