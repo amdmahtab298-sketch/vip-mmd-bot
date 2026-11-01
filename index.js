@@ -253,6 +253,7 @@ const normJid = (jid = '') => {
   try { return jidNormalizedUser(jid); } catch { return String(jid); }
 };
 const ownerNum = () => config.ownerNumber.replace(/\D/g, '');
+const digOnly = (s) => String(s || '').split('@')[0].split(':')[0].replace(/\D/g, '');
 // Display ke liye hamesha ASLI number: sender agar LID pehchan par hai aur uski
 // mapping seekhi hui hai to asli number do, warna jo digits hain wahi.
 const senderNum = (sender) => {
@@ -1042,6 +1043,63 @@ async function checkYtUpdates(sock) {
   }
 }
 
+// Pehchan repair: kuch members ke message me asli number aata hi nahi (sirf
+// LID), aur purane points LID par jama ho gaye the. Bot har ~5 min me active
+// groups ki member-list padh ke har bande ki LID->number mapping seekhta hai
+// (na mile to WhatsApp ki apni LID mapping se poochta hai) aur points ke LID
+// wale record asli number wale record me mila deta hai — bina kisi ke message
+// ka intezaar kiye. Isi se .top/elaan me asli +91 number dikhega.
+let lastIdRepair = 0;
+async function repairIdentities(sock) {
+  const chatIds = new Set([...store.points.keys(), ...store.engageOn, ...store.ytUpdateOn]);
+  for (const chatId of chatIds) {
+    let md = null;
+    try { md = await sock.groupMetadata(chatId); } catch { continue; }
+    if (!md || !Array.isArray(md.participants)) continue;
+    let learned = 0;
+    for (const x of md.participants) {
+      const lD = digOnly(x.lid) || (String(x.id || '').includes('@lid') ? digOnly(x.id) : '');
+      const pD = digOnly(x.phoneNumber) || digOnly(x.jid) || (String(x.id || '').includes('@s.whatsapp.net') ? digOnly(x.id) : '');
+      if (lD && pD && store.lidToPhone.get(lD) !== pD) { store.lidToPhone.set(lD, pD); learned++; }
+    }
+    const pMap = await KV.loadPoints(chatId);
+    // Jin LID keys ka number member-list me bhi nahi mila, WhatsApp ki mapping se poochho
+    for (const [k] of [...pMap.entries()]) {
+      if (!store.lidToPhone.has(k) && k.length >= 14) {
+        try {
+          const pn = await sock.signalRepository?.lidMapping?.getPNForLID(k + '@lid');
+          const pD = digOnly(pn);
+          if (pD) { store.lidToPhone.set(k, pD); learned++; }
+        } catch { /* mapping na mile to chhodo */ }
+      }
+    }
+    if (learned) {
+      store.lidMapDirty = true;
+      console.log(`🧭 pehchan repair: ${learned} nayi mapping seekhi (kul ${store.lidToPhone.size})`);
+    }
+    // LID-key wale points record asli number me milao
+    let merged = 0;
+    for (const [k, rec] of [...pMap.entries()]) {
+      const phone = store.lidToPhone.get(k);
+      if (phone && phone !== k) {
+        const into = pMap.get(phone) || { p: 0, name: '', day: '', dayP: 0, last: 0 };
+        into.p = (into.p || 0) + (rec.p || 0);
+        if (rec.day && rec.day === into.day) into.dayP = (into.dayP || 0) + (rec.dayP || 0);
+        else if (rec.day && (!into.day || rec.day > into.day)) { into.day = rec.day; into.dayP = rec.dayP || 0; }
+        if (!into.name && rec.name) into.name = rec.name;
+        into.last = Math.max(into.last || 0, rec.last || 0);
+        pMap.set(phone, into);
+        pMap.delete(k);
+        merged++;
+      }
+    }
+    if (merged) {
+      store.pointsDirty.add(chatId);
+      console.log(`🧭 pehchan repair: ${merged} LID points record asli number me mile (group ${chatId})`);
+    }
+  }
+}
+
 setInterval(async () => {
   const sock = activeSock;
   if (!sock) return;
@@ -1089,6 +1147,13 @@ setInterval(async () => {
     if (store.ytUpdateOn.size && Date.now() - lastYtCheck > 30 * 60 * 1000) {
       lastYtCheck = Date.now();
       await checkYtUpdates(sock).catch((e) => console.log('yt check fail:', e.message));
+    }
+
+    // ---- Pehchan repair (har ~5 min): member-list se LID->number mapping
+    // seekho aur points ke purane LID wale record asli number me mila do ----
+    if (Date.now() - lastIdRepair > 5 * 60 * 1000) {
+      lastIdRepair = Date.now();
+      await repairIdentities(sock).catch((e) => console.log('pehchan repair fail:', e.message));
     }
 
     // ---- Auto-Engage: 8 baje good morning, 1 baje quiz, 8 baje (raat) active member ----
