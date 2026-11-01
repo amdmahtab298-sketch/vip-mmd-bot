@@ -244,6 +244,23 @@ module.exports = [
     }
   },
   {
+    name: 'idcheck',
+    aliases: [],
+    category: 'Info',
+    ownerOnly: true,
+    desc: 'Pehchan ki jaanch (owner): raw roop, asli number aur mapping source.', usage: '.idcheck',
+    run: async (ctx) => {
+      try {
+        const { msg, sender, store, reply } = ctx;
+        const pk = H.pointsKeyFor(msg, sender, store.lidToPhone);
+        const src = pk.phone
+          ? (String(sender).endsWith('@s.whatsapp.net') ? 'participant khud number roop me aaya' : 'participantAlt number roop me aaya')
+          : (pk.key ? 'seekhi hui LID->number mapping se' : 'NAHI MILA (abhi pehchan sirf LID hai)');
+        await reply(`🪪 *ID Check*\n• Aayi hui pehchan: ${sender}\n• participantAlt: ${msg.key.participantAlt || '(khaali)'}\n• Asli number (resolved): ${pk.key || '(nahi mila)'}\n• LID: ${pk.lidDigits || '(nahi)'}\n• Source: ${src}`);
+      } catch (e) { await safeErr(ctx.reply); }
+    }
+  },
+  {
     name: 'rules',
     aliases: ['rule'],
     category: 'Info',

@@ -389,6 +389,13 @@ async function handleOne(sock, msg) {
 
     const sender = msg.key.participant ? normJid(msg.key.participant) : normJid(chatId);
     const isGroup = chatId.endsWith('@g.us');
+    // Canonical pehchan: resolver se asli number mile to saari ginati/saza usi
+    // par chalegi — ek hi bande ki do alag history (LID wali + number wali) nahi banegi.
+    let idKey = sender;
+    if (isGroup) {
+      const pk0 = H.pointsKeyFor(msg, sender, store.lidToPhone);
+      if (pk0.key) idKey = pk0.key + '@s.whatsapp.net';
+    }
 
     store.seenUsers.add(sender);
     store.seenChats.add(chatId);
@@ -454,7 +461,7 @@ async function handleOne(sock, msg) {
       } catch { /* points fail ho to message nahi rukna chahiye */ }
 
       // ---- shadow-mute: flood ki saaza chal rahi ho to message seedha delete ----
-      const gKey = chatId + ':' + sender;
+      const gKey = chatId + ':' + idKey;
       const muteUntil = shadowMute.get(gKey) || 0;
       if (muteUntil > Date.now()) {
         H.deleteMessageForEveryone(sock, msg).catch(() => {});
@@ -557,7 +564,7 @@ async function handleOne(sock, msg) {
         // pehle asli number (participantAlt) se, fail ho to LID se delete try karta hai.
         const deleted = await H.deleteMessageForEveryone(sock, msg);
         if (deleted) {
-          const key = chatId + ':' + sender;
+          const key = chatId + ':' + idKey;
           const now = Date.now();
           let rec = store.abuseWarns.get(key);
           if (!rec || now - rec.firstAt > 24 * 60 * 60 * 1000) rec = { count: 0, firstAt: now };
