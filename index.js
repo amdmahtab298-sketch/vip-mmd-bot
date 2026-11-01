@@ -412,6 +412,14 @@ async function handleOne(sock, msg) {
 
     const text = getText(msg).trim();
 
+    // ---- BOT OFF gate: jis group me .botoff chala hai, wahan bot bilkul
+    // chup rahega (na command, na delete, na points) — sirf .boton/.botoff
+    // (admin/owner wale command) is bandi ko khol sakte hain ----
+    if (isGroup && store.botOffChats.has(chatId)) {
+      const c = text.startsWith(config.prefix) ? (text.slice(config.prefix.length).trim().split(/\s+/)[0] || '').toLowerCase() : '';
+      if (c !== 'boton' && c !== 'botoff' && c !== 'botchalu' && c !== 'botband') return;
+    }
+
     // ---- hook: view-once saver (DM me bot ko bheja gaya view-once wapas bhejo) ----
     if (isViewOnce(msg) && !isGroup && !text.startsWith(config.prefix)) {
       try {
@@ -825,8 +833,9 @@ async function startSock() {
           store.engageOn = new Set(await KV.loadSet('settings:engageOn'));
           store.ytUpdateOn = new Set(await KV.loadSet('settings:ytUpdateOn'));
           store.abusePunishOn = new Set(await KV.loadSet('settings:abusePunishOn'));
+          store.botOffChats = new Set(await KV.loadSet('settings:botOff'));
           const lm = await KV.loadLidMap();
-          console.log(`🛡️ Guard settings loaded: night=${store.nightOn.size}, engage=${store.engageOn.size}, antiforward=${store.antiforwardOn.size} group(s), LID mapping=${lm}`);
+          console.log(`🛡️ Guard settings loaded: night=${store.nightOn.size}, engage=${store.engageOn.size}, antiforward=${store.antiforwardOn.size} group(s), botoff=${store.botOffChats.size} group(s), LID mapping=${lm}`);
           console.log(AI.enabled() ? '🤖 AI features: ON (Gemini) — YouTube quiz + update alerts chalenge' : '🤖 AI features: OFF (GEMINI_API_KEY nahi hai) — quiz bank se chalega, update alerts band');
         } catch (e) { console.log('sticker blocklist load fail:', e.message); }
       }
@@ -906,6 +915,7 @@ async function startSock() {
 
   // welcome / goodbye
   sock.ev.on('group-participants.update', async (u) => {
+    if (store.botOffChats.has(u.id)) return; // bot band group me welcome/goodbye bhi nahi
     try {
       const { id, participants, action } = u;
       if (action === 'add' && !store.welcomeOffChats.has(id)) {
@@ -1047,6 +1057,7 @@ async function checkYtUpdates(sock) {
     const summary = await AI.summarizeUpdate(item);
     const text = `🚨 *YouTube Update!* 📺\n(${item.source})\n\n📌 *${item.title}*${summary ? `\n\n${summary}` : ''}\n\n🔗 ${item.link}`;
     for (const chatId of store.ytUpdateOn) {
+      if (store.botOffChats.has(chatId)) continue; // bot band group me koi sandesh nahi
       await sock.sendMessage(chatId, { text }).catch(() => {});
     }
     console.log('📺 YouTube update bheja:', item.title);
@@ -1121,6 +1132,7 @@ setInterval(async () => {
     // ---- Night Mode: raat 12 se subah 6 tak group lock (sirf admin bol sakenge) ----
     const shouldLock = hh >= 0 && hh < 6;
     for (const chatId of store.nightOn) {
+      if (store.botOffChats.has(chatId)) continue; // bot band group ko lock bhi nahi hoga
       const locked = store.nightLocked.has(chatId);
       if (shouldLock && !locked) {
         try {
@@ -1176,6 +1188,7 @@ setInterval(async () => {
     for (const slot of slots) {
       if (hh !== slot.hh || mm !== slot.mm) continue;
       for (const chatId of store.engageOn) {
+        if (store.botOffChats.has(chatId)) continue; // bot band group me elaan/quiz nahi
         const doneKey = `${dateKey}:${slot.key}:${chatId}`;
         if (engageDone.has(doneKey)) continue;
         engageDone.add(doneKey);

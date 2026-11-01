@@ -432,6 +432,38 @@ module.exports = [
     }
   },
   {
+    name: 'botoff',
+    aliases: ['botband'],
+    category: 'Group',
+    desc: 'Is group me bot ko poori tarah BAND karo (sirf admin/owner).', usage: '.botoff',
+    adminOnly: true, groupOnly: true,
+    run: async (ctx) => {
+      try {
+        const { store, chatId, reply } = ctx;
+        if (store.botOffChats.has(chatId)) { await reply('🔴 Bot is group me pehle se OFF hai. Chalane ke liye .boton likho.'); return; }
+        store.botOffChats.add(chatId);
+        await KV.persistSet('settings:botOff', store.botOffChats);
+        await reply('🔴 *Bot OFF ho gaya — is group ke liye.*\nAb bot yahan bilkul chup rahega: na koi command chalega, na gaali delete hogi, na points milenge, na welcome aayega.\n\n🟢 Wapas chalane ke liye sirf admin/owner *.boton* likhe — tab tak ye band hi rahega (bot band-ho-kar chale, tab bhi).');
+      } catch (e) { await safeErr(ctx.reply); }
+    }
+  },
+  {
+    name: 'boton',
+    aliases: ['botchalu'],
+    category: 'Group',
+    desc: 'Band kiye hue bot ko is group me wapas CHALU karo (sirf admin/owner).', usage: '.boton',
+    adminOnly: true, groupOnly: true,
+    run: async (ctx) => {
+      try {
+        const { store, chatId, reply } = ctx;
+        if (!store.botOffChats.has(chatId)) { await reply('🟢 Bot is group me pehle se ON hai.'); return; }
+        store.botOffChats.delete(chatId);
+        await KV.persistSet('settings:botOff', store.botOffChats);
+        await reply('🟢 *Bot ON ho gaya!*\nIs group me saare commands, gaali-suraksha, points aur baaki sab phir se chaalu. 🎉');
+      } catch (e) { await safeErr(ctx.reply); }
+    }
+  },
+  {
     name: 'abusepunish', aliases: ['gaalisaza'], category: 'Group',
     desc: 'Gaali-saza seedhi on/off — 10+ gaali = 1h spam, phir 3h, phir 5h, phir group se remove', usage: '.abusepunish on/off',
     groupOnly: true, adminOnly: true,
