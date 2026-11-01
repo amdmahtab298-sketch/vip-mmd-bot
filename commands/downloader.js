@@ -17,17 +17,46 @@ function qualityOf(text) {
   return /480/.test(String(text || '')) ? '480' : '720';
 }
 
+// Live status helper: ek hi message edit hoke download progress dikhata hai
+// (sab downloaders ke liye — .kawai wala hi system).
+function makeStatus(ctx) {
+  const { sock, chatId, msg } = ctx;
+  let status = null;
+  const setStatus = async (t) => {
+    try {
+      if (!status) status = await sock.sendMessage(chatId, { text: t }, { quoted: msg });
+      else if (status.key) await sock.sendMessage(chatId, { text: t, edit: status.key });
+    } catch { /* edit na chale to chup */ }
+  };
+  let lastPct = -20;
+  const onProgress = (p) => {
+    if (p.stage === 'download' && p.total > 0) {
+      const pct = Math.floor((p.loaded / p.total) * 100);
+      if (pct >= lastPct + 15 || pct === 100) {
+        lastPct = pct;
+        const filled = Math.round(pct / 10);
+        setStatus(`⬇️ Download ho raha hai...\n${'█'.repeat(filled)}${'░'.repeat(10 - filled)} ${pct}%\n📦 ${(p.loaded / 1048576).toFixed(1)} MB / ${(p.total / 1048576).toFixed(1)} MB`);
+      }
+    }
+  };
+  return { setStatus, onProgress };
+}
+
 async function cobaltVideo(ctx, url, audioOnly) {
   const { sock, chatId, msg, reply, text } = ctx;
   if (!url) { await reply('📥 Pehle link to bhejo!\nUsage: ' + HINT); return; }
+  const { setStatus, onProgress } = makeStatus(ctx);
   try {
+    await setStatus(audioOnly ? '⏳ Audio download shuru ho raha hai...' : '⏳ Download shuru ho raha hai...');
     const opts = audioOnly ? { audio: true } : { quality: qualityOf(text) };
-    const r = await cobalt.cobaltDownload(url, opts);
-    if (!r || !r.buffer) { await reply(FAIL); return; }
+    const r = await cobalt.cobaltDownload(url, opts, onProgress);
+    if (!r || !r.buffer) { await setStatus('❌ Download fail ho gaya. Link sahi hai na? Koi dusra link try karo.'); return; }
+    await setStatus('⬆️ Download pura ho gaya! Bhej raha hoon...');
     if (audioOnly) await H.sendAudio(sock, chatId, r.buffer, msg);
     else await H.sendVideo(sock, chatId, r.buffer, DONE, msg);
+    await setStatus('✅ Ho gaya! 👆');
   } catch (e) {
-    await reply(FAIL);
+    try { await setStatus('❌ Download fail ho gaya. Koi dusra link try karo.'); } catch { await reply(FAIL); }
   }
 }
 

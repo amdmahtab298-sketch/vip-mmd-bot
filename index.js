@@ -19,6 +19,7 @@ const H = require('./lib/helpers');
 const { toStickerBuffer } = require('./lib/sticker');
 const KV = require('./lib/kv'); // MMD bot ka apna online storage (alag Supabase project)
 const { useSupabaseAuthState } = require('./lib/supaAuth');
+const { welcomeCard } = require('./lib/card');
 let supaAuth = null; // DB-backed auth state (logout par clear karne ke liye)
 
 const log = pino({ level: 'silent' });
@@ -301,6 +302,20 @@ async function enforceStickerBan(sock, msg, chatId, sender, banned, knownHash) {
   }
 }
 
+// ---------------- Group Guard 2.0 + Points + Scheduler state ----------------
+const floodHits = new Map();    // `${chatId}:${sender}` -> [message timestamps] (10s khidki)
+const floodStrikes = new Map(); // `${chatId}:${sender}` -> { n, firstAt } (1 ghante me gintee)
+const shadowMute = new Map();   // `${chatId}:${sender}` -> mute khatm hone ka time (ms)
+const afNoteAt = new Map();     // 'af:'+chatId -> anti-forward notice ka aakhri time
+let activeSock = null;          // scheduler (night mode/engage) ke liye taaza socket
+
+// IST (Asia/Kolkata) wall-clock: UTC getters is shifted date par IST dikhate hain.
+function istNow() { return new Date(Date.now() + 5.5 * 3600 * 1000); }
+function istDateStr() {
+  const d = istNow();
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
+}
+
 // ---------------- per-message handler ----------------
 async function handleOne(sock, msg) {
   try {
@@ -341,6 +356,92 @@ async function handleOne(sock, msg) {
         }
       } catch { /* ignore */ }
       return;
+    }
+
+    // ================= GROUP GUARD 2.0 + POINTS =================
+    if (isGroup && !msg.key.fromMe) {
+      const pKey = (msg.key.participantAlt || sender).replace(/\D/g, '');
+      // ---- points: har group message par +1 (5s me ek se zyada nahi — farming rok) ----
+      try {
+        const pMap = await KV.loadPoints(chatId);
+        const nowP = Date.now();
+        let rec = pMap.get(pKey);
+        if (!rec) { rec = { p: 0, name: '', day: '', dayP: 0, last: 0 }; pMap.set(pKey, rec); }
+        if (msg.pushName) rec.name = msg.pushName;
+        const todayStr = istDateStr();
+        if (rec.day !== todayStr) { rec.day = todayStr; rec.dayP = 0; }
+        if (nowP - (rec.last || 0) >= 5000) {
+          rec.last = nowP;
+          rec.p += 1;
+          rec.dayP += 1;
+          store.pointsDirty.add(chatId);
+        }
+      } catch { /* points fail ho to message nahi rukna chahiye */ }
+
+      // ---- shadow-mute: flood ki saaza chal rahi ho to message seedha delete ----
+      const gKey = chatId + ':' + sender;
+      const muteUntil = shadowMute.get(gKey) || 0;
+      if (muteUntil > Date.now()) {
+        H.deleteMessageForEveryone(sock, msg).catch(() => {});
+        return;
+      }
+      if (muteUntil) shadowMute.delete(gKey);
+
+      // ---- flood control: 10 second me 7+ text/sticker (default ON) ----
+      const innerG = H.unwrap(msg);
+      const floodable = text.length > 0 || !!innerG?.stickerMessage;
+      if (floodable && !store.floodOff.has(chatId)) {
+        const nowF = Date.now();
+        const arr = (floodHits.get(gKey) || []).filter((t) => nowF - t < 10000);
+        arr.push(nowF);
+        floodHits.set(gKey, arr);
+        if (arr.length >= 7) {
+          floodHits.delete(gKey);
+          const admin = await H.isGroupAdmin(sock, chatId, sender);
+          if (!admin && !isOwnerMsg(sock, msg, sender)) {
+            H.deleteMessageForEveryone(sock, msg).catch(() => {});
+            let st = floodStrikes.get(gKey);
+            if (!st || nowF - st.firstAt > 3600000) st = { n: 0, firstAt: nowF };
+            st.n += 1;
+            floodStrikes.set(gKey, st);
+            if (st.n >= 3) {
+              shadowMute.set(gKey, nowF + 10 * 60000);
+              floodStrikes.delete(gKey);
+              await sock.sendMessage(chatId, {
+                text: `🔇 @${senderNum(sender)} flood ki teesri warning! Ab 10 minute tak tumhare saare message auto-delete honge.`,
+                mentions: [sender],
+              }).catch(() => {});
+            } else {
+              await sock.sendMessage(chatId, {
+                text: `⚠️ @${senderNum(sender)} itne tez-tez message mat bhejo (flood)! Warning ${st.n}/3 — teesri warning par 10 minute ke liye auto-delete lag jayega.`,
+                mentions: [sender],
+              }).catch(() => {});
+            }
+            return;
+          }
+        }
+      }
+
+      // ---- anti-forward: 'baar-baar forward' wala message delete (sirf ON wale groups) ----
+      if (store.antiforwardOn.has(chatId)) {
+        const cInfo = innerG && Object.values(innerG).map((v) => v && v.contextInfo).find(Boolean);
+        if (cInfo && cInfo.isForwarded && (cInfo.forwardingScore || 0) >= 5) {
+          const admin = await H.isGroupAdmin(sock, chatId, sender);
+          if (!admin && !isOwnerMsg(sock, msg, sender)) {
+            const ok = await H.deleteMessageForEveryone(sock, msg);
+            if (ok) {
+              console.log(`↪️ anti-forward delete: ${senderNum(sender)} in group`);
+              const nk = 'af:' + chatId;
+              const nowN = Date.now();
+              if (nowN - (afNoteAt.get(nk) || 0) > 60000) {
+                afNoteAt.set(nk, nowN);
+                await sock.sendMessage(chatId, { text: '🚫 Is group me baar-baar forward hue (Forwarded many times) message allowed nahi hain — delete kar diya gaya.' }).catch(() => {});
+              }
+              return;
+            }
+          }
+        }
+      }
     }
 
     // ---- hook: autosticker (chat me har image -> sticker) ----
@@ -548,9 +649,11 @@ async function startSock() {
   sock.ev.on('connection.update', async (u) => {
     const { connection, lastDisconnect } = u;
     isConnected = connection === 'open';
+    if (connection === 'close' && activeSock === sock) activeSock = null;
     if (u.qr) { latestQR = u.qr; latestQRAt = Date.now(); } // web UI QR tab ke liye save
     if (connection === 'open') {
       reconnectDelay = 3000; // safal connect — backoff reset
+      activeSock = sock; // scheduler ke liye
       console.log(`✅ Bot connected! (${sock.user?.id})`);
       // Sticker blocklist DB se uthao (sirf ek baar per process)
       if (KV.kv && !store.stickerBlockLoaded) {
@@ -560,6 +663,12 @@ async function startSock() {
           console.log(`🧩 Sticker blocklist loaded: ${n} group(s)`);
           const w = await KV.loadWelcomeOff();
           console.log(`👋 Welcome default ON (OFF wale groups: ${w})`);
+          store.floodOff = new Set(await KV.loadSet('settings:floodOff'));
+          store.antiforwardOn = new Set(await KV.loadSet('settings:antiforwardOn'));
+          store.nightOn = new Set(await KV.loadSet('settings:nightOn'));
+          store.nightLocked = new Set(await KV.loadSet('settings:nightLocked'));
+          store.engageOn = new Set(await KV.loadSet('settings:engageOn'));
+          console.log(`🛡️ Guard settings loaded: night=${store.nightOn.size}, engage=${store.engageOn.size}, antiforward=${store.antiforwardOn.size} group(s)`);
         } catch (e) { console.log('sticker blocklist load fail:', e.message); }
       }
       console.log(`📜 ${allCommands.length} commands live — prefix "${config.prefix}"`);
@@ -649,11 +758,23 @@ async function startSock() {
           .filter((j) => j && j.split('@')[0].split(':')[0] !== meNum);
         if (jids.length) {
           const names = jids.map((j) => '@' + j.split('@')[0]).join(' ');
-          await sock.sendMessage(id, {
-            text: `👋 Welcome ${names}!\n🎉 Group me aapka swagat hai!\n📌 Rules dekhne ke liye .rules likho, aur saare commands ke liye .help likho.`,
-            mentions: jids,
-          });
-          console.log(`👋 welcome bheja: ${jids.length} naye member, group ${id}`);
+          const welcomeText = `👋 Welcome ${names}!\n🎉 Group me aapka swagat hai!\n📌 Rules dekhne ke liye .rules likho, aur saare commands ke liye .help likho.`;
+          // Pehle PHOTO CARD try karo (DP ke saath) — fail ho to purana text welcome.
+          let cardSent = false;
+          try {
+            const md = await H.groupMeta(sock, id);
+            const ppUrl = await sock.profilePictureUrl(jids[0], 'image').catch(() => null);
+            const card = await welcomeCard({
+              ppUrl,
+              displayName: '+' + jids[0].split('@')[0],
+              groupName: (md && md.subject) || 'Group',
+              memberNo: (md && md.participants && md.participants.length) || '',
+            });
+            await sock.sendMessage(id, { image: card, caption: welcomeText, mentions: jids });
+            cardSent = true;
+          } catch { /* card fail — text welcome neeche jayega */ }
+          if (!cardSent) await sock.sendMessage(id, { text: welcomeText, mentions: jids });
+          console.log(`👋 welcome bheja (${cardSent ? 'photo card' : 'text'}): ${jids.length} naye member, group ${id}`);
         }
       } else if (action === 'remove' && store.goodbyeChats.has(id)) {
         const names = (participants || [])
@@ -677,6 +798,104 @@ function boot() {
   });
 }
 boot();
+
+// ---------------- Scheduler: Night Mode + Auto-Engage + Points save ----------------
+// Har 30 second me IST ghadi dekh ke kaam karta hai. activeSock na ho to chup.
+const engageDone = new Set(); // `${date}:${slot}:${chatId}` — ek slot ek din me ek baar
+const ENGAGE_QUIZ = [
+  { q: 'Bharat ka rashtriya phal kaun sa hai?', o: ['Aam', 'Kela', 'Seb', 'Angoor'] },
+  { q: 'Duniya ka sabse bada mahasagar kaun sa hai?', o: ['Prashant Mahasagar', 'Atalantik Mahasagar', 'Hind Mahasagar', 'Arktik Mahasagar'] },
+  { q: 'Taj Mahal kis shahar me hai?', o: ['Agra', 'Delhi', 'Jaipur', 'Lucknow'] },
+  { q: 'Cricket ke ek over me kitni ball hoti hain?', o: ['6', '4', '8', '10'] },
+  { q: 'Sabse tez daudne wala janwar kaun sa hai?', o: ['Cheetah', 'Ghoda', 'Hiran', 'Sher'] },
+  { q: 'Paani ka chemical formula kya hai?', o: ['H2O', 'CO2', 'O2', 'NaCl'] },
+  { q: 'Duniya ki sabse lambi nadi kaun si hai?', o: ['Neel Nadi', 'Amazon Nadi', 'Ganga Nadi', 'Mississippi Nadi'] },
+  { q: 'Sabse bada grah (planet) kaun sa hai?', o: ['Brihaspati (Jupiter)', 'Shani (Saturn)', 'Prithvi', 'Mangal'] },
+  { q: 'Ramayana ke lekhak kaun hain?', o: ['Valmiki', 'Tulsidas', 'Ved Vyas', 'Kalidas'] },
+  { q: 'Ek saal me kitne hafte hote hain?', o: ['52', '50', '48', '54'] },
+  { q: 'Suraj kis disha se ugta hai?', o: ['Purab', 'Paschim', 'Uttar', 'Dakshin'] },
+  { q: 'Duniya ka sabse uncha parvat kaun sa hai?', o: ['Mount Everest', 'K2', 'Kanchenjunga', 'Makalu'] },
+  { q: 'Bharat ke pehle Pradhan Mantri kaun the?', o: ['Jawaharlal Nehru', 'Indira Gandhi', 'Rajiv Gandhi', 'Sardar Patel'] },
+  { q: 'Gol gappe, tikki ya dahi bhalla — sabse best chaat?', o: ['Gol Gappe', 'Aloo Tikki', 'Dahi Bhalla', 'Papdi Chaat'] },
+];
+
+setInterval(async () => {
+  const sock = activeSock;
+  if (!sock) return;
+  try {
+    const now = istNow();
+    const hh = now.getUTCHours();
+    const mm = now.getUTCMinutes();
+
+    // ---- Night Mode: raat 12 se subah 6 tak group lock (sirf admin bol sakenge) ----
+    const shouldLock = hh >= 0 && hh < 6;
+    for (const chatId of store.nightOn) {
+      const locked = store.nightLocked.has(chatId);
+      if (shouldLock && !locked) {
+        try {
+          await sock.groupSettingUpdate(chatId, 'announcement');
+          store.nightLocked.add(chatId);
+          await KV.persistSet('settings:nightLocked', store.nightLocked);
+          await sock.sendMessage(chatId, { text: '🌙 *Night Mode ON* — raat ke 12 baj gaye hain. Ab subah 6 baje tak sirf admin hi message kar sakenge. Sab so jao! 😴' }).catch(() => {});
+          console.log('🌙 night lock:', chatId);
+        } catch (e) { console.log('night lock fail:', e.message); }
+      } else if (!shouldLock && locked) {
+        try {
+          await sock.groupSettingUpdate(chatId, 'not_announcement');
+          store.nightLocked.delete(chatId);
+          await KV.persistSet('settings:nightLocked', store.nightLocked);
+          await sock.sendMessage(chatId, { text: '🌅 *Night Mode OFF* — Good morning! Group khul gaya hai, ab sab message kar sakte hain. ☀️' }).catch(() => {});
+          console.log('🌅 night unlock:', chatId);
+        } catch (e) { console.log('night unlock fail:', e.message); }
+      }
+    }
+
+    // ---- Points save (dirty chats) ----
+    if (store.pointsDirty.size) {
+      const dirty = [...store.pointsDirty];
+      store.pointsDirty.clear();
+      for (const chatId of dirty) await KV.persistPoints(chatId);
+    }
+
+    // ---- Auto-Engage: 8 baje good morning, 1 baje quiz, 8 baje (raat) active member ----
+    const dateKey = istDateStr();
+    const slots = [
+      { key: 'gm', hh: 8, mm: 0 },
+      { key: 'quiz', hh: 13, mm: 0 },
+      { key: 'active', hh: 20, mm: 0 },
+    ];
+    for (const slot of slots) {
+      if (hh !== slot.hh || mm !== slot.mm) continue;
+      for (const chatId of store.engageOn) {
+        const doneKey = `${dateKey}:${slot.key}:${chatId}`;
+        if (engageDone.has(doneKey)) continue;
+        engageDone.add(doneKey);
+        try {
+          if (slot.key === 'gm') {
+            await sock.sendMessage(chatId, { text: '🌅 *Good Morning dosto!* ☀️\nAaj ka din mast jaye! Group me active raho, points kamao aur .top me apna naam banao! 🏆' });
+          } else if (slot.key === 'quiz') {
+            const q = ENGAGE_QUIZ[Math.floor(Math.random() * ENGAGE_QUIZ.length)];
+            await sock.sendMessage(chatId, { poll: { name: '🧠 Aaj ka Quiz: ' + q.q, values: q.o, selectableCount: 1 } });
+          } else {
+            const pMap = await KV.loadPoints(chatId);
+            let best = null;
+            for (const [k, v] of pMap) {
+              if (v.day === dateKey && v.dayP > 0 && (!best || v.dayP > best.v.dayP)) best = { k, v };
+            }
+            if (best) {
+              await sock.sendMessage(chatId, {
+                text: `🏆 *Aaj ke sabse active member:* @${best.k}\nAaj inhone group me sabse zyada hissa liya! Badhai ho! 🎉\nKal tumhari baari ho sakti hai — active raho!`,
+                mentions: [best.k + '@s.whatsapp.net'],
+              });
+            }
+          }
+          console.log(`🎯 engage ${slot.key}:`, chatId);
+        } catch (e) { console.log('engage fail:', slot.key, e.message); }
+      }
+    }
+    if (engageDone.size > 500) engageDone.clear();
+  } catch { /* scheduler kabhi rukna nahi chahiye */ }
+}, 30000);
 
 // ---------------- pairing web UI (Express) ----------------
 // Bot init ko block nahi karta — saath me chalta hai.

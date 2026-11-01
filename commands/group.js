@@ -363,6 +363,106 @@ module.exports = [
     }
   },
   {
+    name: 'floodguard', aliases: ['flood'], category: 'Group',
+    desc: 'Flood control on/off (default ON hai) — tez-tez message par warning, 3rd par 10 min auto-delete', usage: '.floodguard on/off',
+    groupOnly: true, adminOnly: true,
+    run: async (ctx) => {
+      const { args, chatId, store, reply } = ctx;
+      if (args[0] === 'off') {
+        store.floodOff.add(chatId);
+        await KV.persistSet('settings:floodOff', store.floodOff);
+        await reply('🛡️ Flood guard OFF! Ab is group me flood check nahi hoga.');
+      } else {
+        store.floodOff.delete(chatId);
+        await KV.persistSet('settings:floodOff', store.floodOff);
+        await reply('🛡️ Flood guard ON! (waise ye default hi ON rehta hai)\n10 second me 7+ message = warning, teesri warning = 10 minute auto-delete.');
+      }
+    }
+  },
+  {
+    name: 'antiforward', aliases: ['noforward'], category: 'Group',
+    desc: "'Forwarded many times' wale message auto-delete on/off (default OFF)", usage: '.antiforward on/off',
+    groupOnly: true, adminOnly: true,
+    run: async (ctx) => {
+      const { args, chatId, store, reply } = ctx;
+      if (args[0] === 'off') {
+        store.antiforwardOn.delete(chatId);
+        await KV.persistSet('settings:antiforwardOn', store.antiforwardOn);
+        await reply('↪️ Anti-forward OFF!');
+      } else {
+        store.antiforwardOn.add(chatId);
+        await KV.persistSet('settings:antiforwardOn', store.antiforwardOn);
+        await reply('↪️ Anti-forward ON! Ab jo message bohot baar forward hua hoga (Forwarded many times), bot use delete kar dega (admin/owner ko chhod kar).');
+      }
+    }
+  },
+  {
+    name: 'nightmode', aliases: ['night'], category: 'Group',
+    desc: 'Night mode on/off — raat 12 se subah 6 group auto-lock (sirf admin bol sakenge)', usage: '.nightmode on/off',
+    groupOnly: true, adminOnly: true,
+    run: async (ctx) => {
+      const { args, chatId, store, reply } = ctx;
+      if (args[0] === 'off') {
+        store.nightOn.delete(chatId);
+        await KV.persistSet('settings:nightOn', store.nightOn);
+        await reply('🌙 Night mode OFF! (Agar group abhi bot ke lock me hai to agle check me khul jayega.)');
+      } else {
+        store.nightOn.add(chatId);
+        await KV.persistSet('settings:nightOn', store.nightOn);
+        await reply('🌙 Night mode ON! Har raat 12:00 baje group auto-lock ho jayega (sirf admin message kar sakenge) aur subah 6:00 baje khud khul jayega.\n(Bot ka group admin hona zaroori hai.)');
+      }
+    }
+  },
+  {
+    name: 'engage', aliases: [], category: 'Group',
+    desc: 'Auto-engage on/off — roz 8am good morning, 1pm quiz poll, 8pm sabse active member', usage: '.engage on/off',
+    groupOnly: true, adminOnly: true,
+    run: async (ctx) => {
+      const { args, chatId, store, reply } = ctx;
+      if (args[0] === 'off') {
+        store.engageOn.delete(chatId);
+        await KV.persistSet('settings:engageOn', store.engageOn);
+        await reply('🎯 Auto-engage OFF!');
+      } else {
+        store.engageOn.add(chatId);
+        await KV.persistSet('settings:engageOn', store.engageOn);
+        await reply('🎯 Auto-engage ON!\n🌅 Subah 8:00 — Good morning message\n🧠 Dopahar 1:00 — Quiz poll\n🏆 Raat 8:00 — Aaj ke sabse active member ka elaan');
+      }
+    }
+  },
+  {
+    name: 'points', aliases: ['mypoints'], category: 'Group',
+    desc: 'Apne points dekho (group me active rehne par milte hain)', usage: '.points',
+    groupOnly: true,
+    run: async (ctx) => {
+      const { chatId, sender, msg, reply } = ctx;
+      const pMap = await KV.loadPoints(chatId);
+      const pKey = (msg.key.participantAlt || sender).replace(/\D/g, '');
+      const rec = pMap.get(pKey);
+      if (!rec || !rec.p) { await reply('🏆 Tumhare abhi 0 points hain. Group me message karo, points kamao!'); return; }
+      const sorted = [...pMap.entries()].sort((a, b) => (b[1].p || 0) - (a[1].p || 0));
+      const rank = sorted.findIndex(([k]) => k === pKey) + 1;
+      await reply(`🏆 Tumhare points: *${rec.p}*\n📊 Is group me tumhari rank: *#${rank}* (kul ${sorted.length} members me)\nAaj ke points: ${rec.dayP || 0} — .top se leaderboard dekho!`);
+    }
+  },
+  {
+    name: 'top', aliases: ['leaderboard', 'top10'], category: 'Group',
+    desc: 'Group ke top 10 sabse zyada points wale members', usage: '.top',
+    groupOnly: true,
+    run: async (ctx) => {
+      const { chatId, reply } = ctx;
+      const pMap = await KV.loadPoints(chatId);
+      const sorted = [...pMap.entries()].filter(([, v]) => v && v.p > 0).sort((a, b) => b[1].p - a[1].p).slice(0, 10);
+      if (!sorted.length) { await reply('🏆 Abhi tak kisi ke points nahi bane. Pehle message karo aur points kamao!'); return; }
+      const medals = ['🥇', '🥈', '🥉'];
+      const lines = sorted.map(([k, v], i) => `${medals[i] || (i + 1) + '.'} @${k} — *${v.p}* points`);
+      await ctx.sock.sendMessage(chatId, {
+        text: `🏆 *Group Leaderboard — Top ${sorted.length}*\n\n${lines.join('\n')}\n\nGroup me active raho, points bhadhao! 💪`,
+        mentions: sorted.map(([k]) => k + '@s.whatsapp.net'),
+      }).catch(async () => { await reply(lines.join('\n')); });
+    }
+  },
+  {
     name: 'byeoff', aliases: [], category: 'Group',
     desc: 'Goodbye message band karo', usage: '.byeoff',
     groupOnly: true, adminOnly: true,
