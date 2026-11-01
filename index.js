@@ -273,9 +273,17 @@ async function resolveJoinerNumber(sock, p, md) {
     lidDigits = dig(p.lid) || (String(p.id || '').includes('@lid') ? dig(p.id) : '');
     if (!phone && String(p.id || '').includes('@s.whatsapp.net')) phone = dig(p.id);
   }
-  if (lidDigits && !phone && md && Array.isArray(md.participants)) {
-    const hit = md.participants.find((x) => dig(x.lid) === lidDigits || dig(x.id) === lidDigits);
-    if (hit) phone = dig(hit.phoneNumber) || (String(hit.id || '').includes('@s.whatsapp.net') ? dig(hit.id) : '');
+  if (md && Array.isArray(md.participants)) {
+    // Metadata ke HAR member ki LID->number mapping seekh lo — aage sabke kaam aayegi
+    for (const x of md.participants) {
+      const lD = dig(x.lid) || (String(x.id || '').includes('@lid') ? dig(x.id) : '');
+      const pD = dig(x.phoneNumber) || dig(x.jid) || (String(x.id || '').includes('@s.whatsapp.net') ? dig(x.id) : '');
+      if (lD && pD && store.lidToPhone.get(lD) !== pD) { store.lidToPhone.set(lD, pD); store.lidMapDirty = true; }
+    }
+    if (lidDigits && !phone) {
+      const hit = md.participants.find((x) => dig(x.lid) === lidDigits || dig(x.id) === lidDigits);
+      if (hit) phone = dig(hit.phoneNumber) || dig(hit.jid) || (String(hit.id || '').includes('@s.whatsapp.net') ? dig(hit.id) : '');
+    }
   }
   if (lidDigits && !phone && sock) {
     try {
@@ -827,20 +835,37 @@ async function startSock() {
           // Pehle PHOTO CARD try karo (DP ke saath) — fail ho to purana text welcome.
           let cardSent = false;
           try {
-            const md = await H.groupMeta(sock, id);
+            // TAAZA metadata lo — cache wala 60s purana ho sakta hai, usme naya
+            // member hota hi nahi (pehla fix isiliye in members par fail hua).
+            let md = null;
+            try { md = await sock.groupMetadata(id); } catch { md = await H.groupMeta(sock, id); }
             // Card par ASLI number chhapega — member sirf LID pehchan par aaya ho
-            // to metadata/mapping se uska sachha number khojo (warna +1419... jaisi
-            // nakli LID chhap jati thi).
-            const joinerPhone = await resolveJoinerNumber(sock, rawList[0].p, md);
-            const ppUrl = await sock.profilePictureUrl(jids[0], 'image').catch(() => null);
-            const card = await welcomeCard({
-              ppUrl,
-              displayName: '+' + (joinerPhone || jids[0].split('@')[0]),
-              groupName: (md && md.subject) || 'Group',
-              memberNo: (md && md.participants && md.participants.length) || '',
-            });
-            await sock.sendMessage(id, { image: card, caption: welcomeText, mentions: jids });
-            cardSent = true;
+            // to metadata/mapping se uska sachha number khojo.
+            let joinerPhone = await resolveJoinerNumber(sock, rawList[0].p, md);
+            if (!joinerPhone) {
+              // Ek mauka aur: 25s me aksar mapping sync ho jati hai, ya member
+              // message bhej ke apna asli number (participantAlt) de deta hai.
+              await new Promise((r) => setTimeout(r, 25000));
+              let md2 = null;
+              try { md2 = await sock.groupMetadata(id); } catch { /* ignore */ }
+              joinerPhone = await resolveJoinerNumber(sock, rawList[0].p, md2 || md);
+              if (md2) md = md2;
+            }
+            if (joinerPhone) {
+              const ppUrl = await sock.profilePictureUrl(jids[0], 'image').catch(() => null);
+              const card = await welcomeCard({
+                ppUrl,
+                displayName: '+' + joinerPhone,
+                groupName: (md && md.subject) || 'Group',
+                memberNo: (md && md.participants && md.participants.length) || '',
+              });
+              await sock.sendMessage(id, { image: card, caption: welcomeText, mentions: jids });
+              cardSent = true;
+            } else {
+              // Asli number kahin nahi mila — nakli LID number card par MAT chhaapo.
+              // Text welcome jayega, usme tag member ke sahi naam ke saath dikhta hai.
+              console.log('👋 welcome card skip (asli number nahi mila):', JSON.stringify(rawList[0].p));
+            }
           } catch { /* card fail — text welcome neeche jayega */ }
           if (!cardSent) await sock.sendMessage(id, { text: welcomeText, mentions: jids });
           console.log(`👋 welcome bheja (${cardSent ? 'photo card' : 'text'}): ${jids.length} naye member, group ${id}`);
