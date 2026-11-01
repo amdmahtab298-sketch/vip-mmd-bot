@@ -250,7 +250,46 @@ const normJid = (jid = '') => {
   try { return jidNormalizedUser(jid); } catch { return String(jid); }
 };
 const ownerNum = () => config.ownerNumber.replace(/\D/g, '');
-const senderNum = (sender) => normJid(sender).split('@')[0].replace(/\D/g, '');
+// Display ke liye hamesha ASLI number: sender agar LID pehchan par hai aur uski
+// mapping seekhi hui hai to asli number do, warna jo digits hain wahi.
+const senderNum = (sender) => {
+  const raw = normJid(sender);
+  const d = raw.split('@')[0].replace(/\D/g, '');
+  if (raw.endsWith('@lid')) return store.lidToPhone.get(d) || d;
+  return d;
+};
+// Naye member ka ASLI number khojo (welcome card / goodbye ke liye).
+// Participant kabhi sirf LID string/object me aata hai — pehle usi object ka
+// phoneNumber, phir group metadata me LID se khoj, phir WhatsApp ki LID
+// mapping, aakhir me seekhi hui apni mapping. Mil jaye to mapping seekh bhi lo.
+async function resolveJoinerNumber(sock, p, md) {
+  const dig = (s) => String(s || '').replace(/\D/g, '');
+  let phone = '';
+  let lidDigits = '';
+  if (typeof p === 'string') {
+    if (p.includes('@lid')) lidDigits = dig(p); else phone = dig(p);
+  } else if (p) {
+    phone = dig(p.phoneNumber);
+    lidDigits = dig(p.lid) || (String(p.id || '').includes('@lid') ? dig(p.id) : '');
+    if (!phone && String(p.id || '').includes('@s.whatsapp.net')) phone = dig(p.id);
+  }
+  if (lidDigits && !phone && md && Array.isArray(md.participants)) {
+    const hit = md.participants.find((x) => dig(x.lid) === lidDigits || dig(x.id) === lidDigits);
+    if (hit) phone = dig(hit.phoneNumber) || (String(hit.id || '').includes('@s.whatsapp.net') ? dig(hit.id) : '');
+  }
+  if (lidDigits && !phone && sock) {
+    try {
+      const pn = await sock.signalRepository?.lidMapping?.getPNForLID(lidDigits + '@lid');
+      if (pn) phone = dig(pn);
+    } catch { /* mapping API na chale to aage badho */ }
+  }
+  if (lidDigits && !phone) phone = store.lidToPhone.get(lidDigits) || '';
+  if (lidDigits && phone && store.lidToPhone.get(lidDigits) !== phone) {
+    store.lidToPhone.set(lidDigits, phone);
+    store.lidMapDirty = true;
+  }
+  return phone;
+}
 // Owner pehchan ke 3 tareeke: (1) number match, (2) fromMe — self-bot mode me bot
 // wala number hi owner ka hai, uske bheje message hamesha owner ke hain,
 // (3) bot ki apni LID — WhatsApp kabhi number ki jagah chhupi ID (LID) bhejta hai;
@@ -778,9 +817,10 @@ async function startSock() {
         // Welcome har group me default ON hai (.welcome off se band hota hai).
         // Participants naye Baileys me object ({id/lid/phoneNumber}) bhi ho sakte hain.
         const meNum = (sock.user?.id || '').split('@')[0].split(':')[0];
-        const jids = (participants || [])
-          .map((p) => (typeof p === 'string' ? p : (p.phoneNumber || p.id || p.lid || '')))
-          .filter((j) => j && j.split('@')[0].split(':')[0] !== meNum);
+        const rawList = (participants || [])
+          .map((p) => ({ p, jid: typeof p === 'string' ? p : (p.phoneNumber || p.id || p.lid || '') }))
+          .filter((x) => x.jid && x.jid.split('@')[0].split(':')[0] !== meNum);
+        const jids = rawList.map((x) => x.jid);
         if (jids.length) {
           const names = jids.map((j) => '@' + j.split('@')[0]).join(' ');
           const welcomeText = `👋 Welcome ${names}!\n🎉 Group me aapka swagat hai!\n📌 Rules dekhne ke liye .rules likho, aur saare commands ke liye .help likho.`;
@@ -788,10 +828,14 @@ async function startSock() {
           let cardSent = false;
           try {
             const md = await H.groupMeta(sock, id);
+            // Card par ASLI number chhapega — member sirf LID pehchan par aaya ho
+            // to metadata/mapping se uska sachha number khojo (warna +1419... jaisi
+            // nakli LID chhap jati thi).
+            const joinerPhone = await resolveJoinerNumber(sock, rawList[0].p, md);
             const ppUrl = await sock.profilePictureUrl(jids[0], 'image').catch(() => null);
             const card = await welcomeCard({
               ppUrl,
-              displayName: '+' + jids[0].split('@')[0],
+              displayName: '+' + (joinerPhone || jids[0].split('@')[0]),
               groupName: (md && md.subject) || 'Group',
               memberNo: (md && md.participants && md.participants.length) || '',
             });
@@ -802,11 +846,14 @@ async function startSock() {
           console.log(`👋 welcome bheja (${cardSent ? 'photo card' : 'text'}): ${jids.length} naye member, group ${id}`);
         }
       } else if (action === 'remove' && store.goodbyeChats.has(id)) {
-        const names = (participants || [])
-          .map((p) => (typeof p === 'string' ? p : (p.phoneNumber || p.id || p.lid || '')))
-          .filter(Boolean)
-          .map((j) => '@' + j.split('@')[0]).join(' ');
-        if (names) await sock.sendMessage(id, { text: `👋 Alvida ${names}!` });
+        const shown = [];
+        for (const p of participants || []) {
+          const jid = typeof p === 'string' ? p : (p.phoneNumber || p.id || p.lid || '');
+          if (!jid) continue;
+          const phone = await resolveJoinerNumber(sock, p, null);
+          shown.push('@' + (phone || jid.split('@')[0]));
+        }
+        if (shown.length) await sock.sendMessage(id, { text: `👋 Alvida ${shown.join(' ')}!` });
       }
     } catch { /* ignore */ }
   });
@@ -913,9 +960,10 @@ setInterval(async () => {
               if (v.day === dateKey && v.dayP > 0 && (!best || v.dayP > best.v.dayP)) best = { k, v };
             }
             if (best) {
+              const dispK = store.lidToPhone.get(best.k) || best.k; // display hamesha asli number se
               await sock.sendMessage(chatId, {
-                text: `🏆 *Aaj ke sabse active member:* @${best.k}\nAaj inhone group me sabse zyada hissa liya! Badhai ho! 🎉\nKal tumhari baari ho sakti hai — active raho!`,
-                mentions: [best.k + '@s.whatsapp.net'],
+                text: `🏆 *Aaj ke sabse active member:* @${dispK}\nAaj inhone group me sabse zyada hissa liya! Badhai ho! 🎉\nKal tumhari baari ho sakti hai — active raho!`,
+                mentions: [dispK + '@s.whatsapp.net'],
               });
             }
           }
