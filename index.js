@@ -360,21 +360,43 @@ async function handleOne(sock, msg) {
 
     // ================= GROUP GUARD 2.0 + POINTS =================
     if (isGroup && !msg.key.fromMe) {
-      const pKey = (msg.key.participantAlt || sender).replace(/\D/g, '');
       // ---- points: har group message par +1 (5s me ek se zyada nahi — farming rok) ----
+      // Key hamesha ASLI phone number hogi — LID ki nakli ID kabhi nahi (usi se .top
+      // me galat country code dikhta tha). participantAlt mile to LID->number mapping
+      // seekho aur purani LID-key wali points entry asli number me mila do.
       try {
-        const pMap = await KV.loadPoints(chatId);
-        const nowP = Date.now();
-        let rec = pMap.get(pKey);
-        if (!rec) { rec = { p: 0, name: '', day: '', dayP: 0, last: 0 }; pMap.set(pKey, rec); }
-        if (msg.pushName) rec.name = msg.pushName;
-        const todayStr = istDateStr();
-        if (rec.day !== todayStr) { rec.day = todayStr; rec.dayP = 0; }
-        if (nowP - (rec.last || 0) >= 5000) {
-          rec.last = nowP;
-          rec.p += 1;
-          rec.dayP += 1;
-          store.pointsDirty.add(chatId);
+        const pk = H.pointsKeyFor(msg, sender, store.lidToPhone);
+        if (pk.key) {
+          const pMap = await KV.loadPoints(chatId);
+          if (pk.phone && pk.lidDigits && pk.lidDigits !== pk.key) {
+            if (store.lidToPhone.get(pk.lidDigits) !== pk.phone) {
+              store.lidToPhone.set(pk.lidDigits, pk.phone);
+              store.lidMapDirty = true;
+            }
+            const oldRec = pMap.get(pk.lidDigits);
+            if (oldRec) {
+              const into = pMap.get(pk.key) || { p: 0, name: '', day: '', dayP: 0, last: 0 };
+              into.p = (into.p || 0) + (oldRec.p || 0);
+              if (oldRec.day === istDateStr()) { into.day = oldRec.day; into.dayP = (into.dayP || 0) + (oldRec.dayP || 0); }
+              if (!into.name && oldRec.name) into.name = oldRec.name;
+              pMap.set(pk.key, into);
+              pMap.delete(pk.lidDigits);
+              store.pointsDirty.add(chatId);
+              console.log(`🏆 points merge: LID wali entry asli number ${pk.key} me milayi gayi`);
+            }
+          }
+          const nowP = Date.now();
+          let rec = pMap.get(pk.key);
+          if (!rec) { rec = { p: 0, name: '', day: '', dayP: 0, last: 0 }; pMap.set(pk.key, rec); }
+          if (msg.pushName) rec.name = msg.pushName;
+          const todayStr = istDateStr();
+          if (rec.day !== todayStr) { rec.day = todayStr; rec.dayP = 0; }
+          if (nowP - (rec.last || 0) >= 5000) {
+            rec.last = nowP;
+            rec.p += 1;
+            rec.dayP += 1;
+            store.pointsDirty.add(chatId);
+          }
         }
       } catch { /* points fail ho to message nahi rukna chahiye */ }
 
@@ -668,7 +690,8 @@ async function startSock() {
           store.nightOn = new Set(await KV.loadSet('settings:nightOn'));
           store.nightLocked = new Set(await KV.loadSet('settings:nightLocked'));
           store.engageOn = new Set(await KV.loadSet('settings:engageOn'));
-          console.log(`🛡️ Guard settings loaded: night=${store.nightOn.size}, engage=${store.engageOn.size}, antiforward=${store.antiforwardOn.size} group(s)`);
+          const lm = await KV.loadLidMap();
+          console.log(`🛡️ Guard settings loaded: night=${store.nightOn.size}, engage=${store.engageOn.size}, antiforward=${store.antiforwardOn.size} group(s), LID mapping=${lm}`);
         } catch (e) { console.log('sticker blocklist load fail:', e.message); }
       }
       console.log(`📜 ${allCommands.length} commands live — prefix "${config.prefix}"`);
@@ -855,6 +878,11 @@ setInterval(async () => {
       const dirty = [...store.pointsDirty];
       store.pointsDirty.clear();
       for (const chatId of dirty) await KV.persistPoints(chatId);
+    }
+    // ---- LID->number mapping save ----
+    if (store.lidMapDirty) {
+      store.lidMapDirty = false;
+      await KV.persistLidMap();
     }
 
     // ---- Auto-Engage: 8 baje good morning, 1 baje quiz, 8 baje (raat) active member ----

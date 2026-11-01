@@ -435,13 +435,16 @@ module.exports = [
     desc: 'Apne points dekho (group me active rehne par milte hain)', usage: '.points',
     groupOnly: true,
     run: async (ctx) => {
-      const { chatId, sender, msg, reply } = ctx;
+      const { chatId, sender, msg, store, reply } = ctx;
       const pMap = await KV.loadPoints(chatId);
-      const pKey = (msg.key.participantAlt || sender).replace(/\D/g, '');
-      const rec = pMap.get(pKey);
+      // Asli number wali key (LID mile to mapping se) — warna purani LID entry bhi dekho
+      const pk = H.pointsKeyFor(msg, sender, store.lidToPhone);
+      let foundKey = pk.key;
+      let rec = foundKey ? pMap.get(foundKey) : null;
+      if (!rec && pk.lidDigits) { rec = pMap.get(pk.lidDigits); if (rec) foundKey = pk.lidDigits; }
       if (!rec || !rec.p) { await reply('🏆 Tumhare abhi 0 points hain. Group me message karo, points kamao!'); return; }
       const sorted = [...pMap.entries()].sort((a, b) => (b[1].p || 0) - (a[1].p || 0));
-      const rank = sorted.findIndex(([k]) => k === pKey) + 1;
+      const rank = sorted.findIndex(([k]) => k === foundKey) + 1;
       await reply(`🏆 Tumhare points: *${rec.p}*\n📊 Is group me tumhari rank: *#${rank}* (kul ${sorted.length} members me)\nAaj ke points: ${rec.dayP || 0} — .top se leaderboard dekho!`);
     }
   },
@@ -450,15 +453,17 @@ module.exports = [
     desc: 'Group ke top 10 sabse zyada points wale members', usage: '.top',
     groupOnly: true,
     run: async (ctx) => {
-      const { chatId, reply } = ctx;
+      const { chatId, store, reply } = ctx;
       const pMap = await KV.loadPoints(chatId);
       const sorted = [...pMap.entries()].filter(([, v]) => v && v.p > 0).sort((a, b) => b[1].p - a[1].p).slice(0, 10);
       if (!sorted.length) { await reply('🏆 Abhi tak kisi ke points nahi bane. Pehle message karo aur points kamao!'); return; }
+      // Display hamesha ASLI number se (koi purani LID-key bachi ho to mapping se number dikhao)
+      const disp = (k) => (store.lidToPhone && store.lidToPhone.get(k)) || k;
       const medals = ['🥇', '🥈', '🥉'];
-      const lines = sorted.map(([k, v], i) => `${medals[i] || (i + 1) + '.'} @${k} — *${v.p}* points`);
+      const lines = sorted.map(([k, v], i) => `${medals[i] || (i + 1) + '.'} @${disp(k)} — *${v.p}* points`);
       await ctx.sock.sendMessage(chatId, {
         text: `🏆 *Group Leaderboard — Top ${sorted.length}*\n\n${lines.join('\n')}\n\nGroup me active raho, points bhadhao! 💪`,
-        mentions: sorted.map(([k]) => k + '@s.whatsapp.net'),
+        mentions: sorted.map(([k]) => disp(k) + '@s.whatsapp.net'),
       }).catch(async () => { await reply(lines.join('\n')); });
     }
   },
