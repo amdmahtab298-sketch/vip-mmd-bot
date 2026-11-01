@@ -461,15 +461,10 @@ async function handleOne(sock, msg) {
         return;
       }
       if (muteUntil) shadowMute.delete(gKey);
-
-      // ---- gaali-saza wala spam: is dauran bande ke saare message delete honge,
-      // LEKIN gaali wala message aage jayega — taaki saza ki seedhi aage badh sake ----
-      const spamRec = abuseSpam.get(gKey);
-      if (spamRec) {
-        if (spamRec.until > Date.now()) {
-          if (!hasAbuse(text)) { H.deleteMessageForEveryone(sock, msg).catch(() => {}); return; }
-        } else abuseSpam.delete(gKey);
-      }
+      // NOTE: gaali-saza wala spam (abuseSpam) yahan message NAHI rokta — owner ke
+      // kehne par spam ke dauran bhi sirf GAALI wala message delete hoga (neeche
+      // anti-abuse hisse me), aam message aaram se jayega. Spam sirf nigrani ka
+      // samay hai: us dauran phir gaali = seedhi ka agla kadam.
 
       // ---- flood control: 10 second me 7+ text/sticker (default ON) ----
       const innerG = H.unwrap(msg);
@@ -570,7 +565,7 @@ async function handleOne(sock, msg) {
           store.abuseWarns.set(key, rec);
           console.log(`🚫 abuse deleted: ${senderNum(sender)} in group (warning ${rec.count})`);
           // ---- Gaali-saza SEEDHI (sirf .abusepunish ON wale groups me) ----
-          // 10 se zyada gaali = 1 ghante ka SPAM (saare message auto-delete).
+          // 10 se zyada gaali = 1 ghante ka SPAM (nigrani — sirf gaali delete hoti hai).
           // Spam ke dauran phir gaali = spam 3 ghante, phir 5 ghante, chauthi
           // baar = rule-todne ka sandesh + group se REMOVE. Spam khatm ho jaye
           // to seedhi bhi reset — phir se 10 gaali par hi lagegi.
@@ -619,7 +614,7 @@ async function handleOne(sock, msg) {
               abuseSpam.set(key, { until: now + 60 * 60000, stage: 1 });
               store.abuseWarns.set(key, { count: 0, firstAt: now }); // spam ke baad ginati nayi sirre se
               await sock.sendMessage(chatId, {
-                text: `🚨 @${senderNum(sender)} tumne group me *10 se zyada baar gaali* di hai!\nAb tumhare number par *1 ghante ke liye SPAM* laga diya gaya hai — is dauran tumhare saare message auto-delete honge.\n⚠️ Spam ke dauran phir gaali di to spam *3 ghante*, phir *5 ghante* ho jayega — aur phir bhi gaali di to group se *REMOVE* kar diye jaoge.`,
+                text: `🚨 @${senderNum(sender)} tumne group me *10 se zyada baar gaali* di hai!\nAb tumhare number par *1 ghante ke liye SPAM* laga diya gaya hai.\n⚠️ Agar is dauran tumne phir gaali di, to spam *3 ghante* ho jayega — phir *5 ghante* — aur phir bhi gaali di to group se *REMOVE* kar diye jaoge.`,
                 mentions: [sender],
               }).catch(() => {});
               console.log(`🚨 abuse ladder stage 1 (1h spam): ${senderNum(sender)}`);

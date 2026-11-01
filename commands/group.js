@@ -444,7 +444,7 @@ module.exports = [
       } else {
         store.abusePunishOn.add(chatId);
         await KV.persistSet('settings:abusePunishOn', store.abusePunishOn);
-        await reply('⚖️ Gaali-saza seedhi ON!\nIs group me ab ye niyam chalega:\n• *10 se zyada gaali* = 1 ghante ka SPAM (saare message auto-delete)\n• Spam ke dauran phir gaali = spam *3 ghante*\n• Phir gaali = spam *5 ghante*\n• Phir bhi gaali = rule-todne ka sandesh + group se *REMOVE*\n(Admin aur owner isse bahar hain. Remove ke liye bot ka group admin hona zaroori hai.)');
+        await reply('⚖️ Gaali-saza seedhi ON!\nIs group me ab ye niyam chalega:\n• *10 se zyada gaali* = 1 ghante ka SPAM (is dauran gaali wala message hi delete hoga, aam baat chalegi)\n• Spam ke dauran phir gaali = spam *3 ghante*\n• Phir gaali = spam *5 ghante*\n• Phir bhi gaali = rule-todne ka sandesh + group se *REMOVE*\n(Admin aur owner isse bahar hain. Remove ke liye bot ka group admin hona zaroori hai.)');
       }
     }
   },
