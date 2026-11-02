@@ -432,6 +432,32 @@ module.exports = [
     }
   },
   {
+    name: 'itsmahtab',
+    aliases: ['mahtabai'],
+    category: 'Group',
+    desc: "'its Mahtab AI' chalu/band karo — ON ho to group ke har message ka AI jawab dega (sirf admin/owner).", usage: '.itsmahtab on/off',
+    adminOnly: true, groupOnly: true,
+    run: async (ctx) => {
+      try {
+        const { args, store, chatId, reply } = ctx;
+        const a = (args[0] || '').toLowerCase();
+        if (a === 'on') {
+          if (store.aiMahtabOn.has(chatId)) { await reply('🤖 *its Mahtab AI* is group me pehle se CHALU hai.'); return; }
+          store.aiMahtabOn.add(chatId);
+          await KV.persistSet('settings:aiMahtabOn', store.aiMahtabOn);
+          await reply('🤖✨ *its Mahtab AI CHALU ho gaya is group me!*\nAb se group me jo bhi aam message aayega, uska jawab main khud dunga — sawal ho ya aam baat, sab ka! 😎\n(Khali command wale message aur gaali wale message isse bahar hain; band karne ke liye: .itsmahtab off)');
+        } else if (a === 'off') {
+          if (!store.aiMahtabOn.has(chatId)) { await reply('🤖 *its Mahtab AI* is group me pehle se BAND hai.'); return; }
+          store.aiMahtabOn.delete(chatId);
+          await KV.persistSet('settings:aiMahtabOn', store.aiMahtabOn);
+          await reply('🤖 *its Mahtab AI BAND ho gaya.* Ab main sirf command par jawab dunga.');
+        } else {
+          await reply(`🤖 *its Mahtab AI* is group me abhi: *${store.aiMahtabOn.has(chatId) ? 'CHALU ✅' : 'BAND ❌'}*\nChalane ke liye: .itsmahtab on\nBand karne ke liye: .itsmahtab off`);
+        }
+      } catch (e) { await safeErr(ctx.reply); }
+    }
+  },
+  {
     name: 'botoff',
     aliases: ['botband'],
     category: 'Group',

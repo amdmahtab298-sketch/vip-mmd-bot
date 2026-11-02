@@ -696,6 +696,18 @@ async function handleOne(sock, msg) {
       }
     }
 
+    // ---- its Mahtab AI: ON wale group me har aam message ka AI jawab ----
+    // (command wale message dispatch sambhalta hai; gaali wale ko jawab nahi —
+    // wo upar delete ho chuka hota hai; apne/fromMe message par jawab nahi,
+    // warna bot apne hi jawabon se loop me fas jayega)
+    if (isGroup && store.aiMahtabOn.has(chatId) && !msg.key.fromMe) {
+      if (text && !text.startsWith(config.prefix) && !hasAbuse(text)) {
+        queueAiReply(sock, msg, chatId, text).catch(() => {});
+      } else if (!text && (msg.message?.stickerMessage || msg.message?.imageMessage || msg.message?.videoMessage)) {
+        H.react(sock, chatId, msg, '😄').catch(() => {});
+      }
+    }
+
     // ---- command dispatch ----
     if (!text.startsWith(config.prefix)) return;
     const parts = text.slice(config.prefix.length).trim().split(/\s+/);
@@ -834,6 +846,7 @@ async function startSock() {
           store.ytUpdateOn = new Set(await KV.loadSet('settings:ytUpdateOn'));
           store.abusePunishOn = new Set(await KV.loadSet('settings:abusePunishOn'));
           store.botOffChats = new Set(await KV.loadSet('settings:botOff'));
+          store.aiMahtabOn = new Set(await KV.loadSet('settings:aiMahtabOn'));
           const lm = await KV.loadLidMap();
           console.log(`🛡️ Guard settings loaded: night=${store.nightOn.size}, engage=${store.engageOn.size}, antiforward=${store.antiforwardOn.size} group(s), botoff=${store.botOffChats.size} group(s), LID mapping=${lm}`);
           console.log(AI.enabled() ? '🤖 AI features: ON (Gemini) — YouTube quiz + update alerts chalenge' : '🤖 AI features: OFF (GEMINI_API_KEY nahi hai) — quiz bank se chalega, update alerts band');
@@ -1062,6 +1075,53 @@ async function checkYtUpdates(sock) {
     }
     console.log('📺 YouTube update bheja:', item.title);
   }
+}
+
+// ---- its Mahtab AI auto-reply ----
+// Per-group line (queue): ek samay par ek hi jawab banta hai, jawabon ke beech
+// kam se kam 2.5s ka faasla; 4 se zyada pending ho to sabse purana chhod dete
+// hain (purani baat ka der se jawab ajeeb lagta hai). AI band karne par line
+// wahi ruk jati hai. Group ki pichhli kuch baatein yaad rakhta hai (mem),
+// taaki jawab baat-cheet jaisa lage, akela nara nahi.
+function queueAiReply(sock, msg, chatId, text) {
+  let st = store.aiChatState.get(chatId);
+  if (!st) { st = { busy: false, lastAt: 0, queue: [], mem: [] }; store.aiChatState.set(chatId, st); }
+  st.queue.push({ msg, text });
+  if (st.queue.length > 4) st.queue.shift();
+  if (st.busy) return Promise.resolve();
+  st.busy = true;
+  return (async () => {
+    try {
+      while (st.queue.length) {
+        if (!store.aiMahtabOn.has(chatId)) { st.queue.length = 0; break; }
+        const item = st.queue.shift();
+        const wait = 2500 - (Date.now() - st.lastAt);
+        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+        await sendAiReply(sock, chatId, st, item).catch(() => {});
+        st.lastAt = Date.now();
+      }
+    } finally { st.busy = false; }
+  })();
+}
+
+async function sendAiReply(sock, chatId, st, item) {
+  const name = (item.msg.pushName || 'Dost').slice(0, 30);
+  const hist = st.mem.slice(-4).map((m) => `${m.who}: ${m.text}`).join('\n');
+  const prompt =
+    'Tum "its Mahtab" naam ke ek dost jaise AI ho jo ek WhatsApp group me sab se Hinglish (Hindi, Roman script) me baat karta hai. ' +
+    'Tumhara style: dostana, mazedaar, halki masti — lekin tameez ke andar, bina gaali ke. Jawab CHHOTA rakho (1-3 chhoti lines, zyada se zyada 60 shabd), bilkul aise jaise group ka ek member bol raha ho. ' +
+    'Sawal puche to sahi, kaam ka jawab do; aam baat par natural react karo. Khud ko baar-baar AI mat kaho. Kisi ki personal jaankari (number, pata) na mango, na do. Agar kisi fact ka pakka yakeen na ho to ghuma kar galat jawab bilkul mat do — seedha bol do ki ye pakka nahi pata.\n' +
+    (hist ? `Group ki pichhli baatein:\n${hist}\n` : '') +
+    `${name} ne kaha: ${item.text.slice(0, 300)}\nTumhara jawab (sirf jawab likho, apna naam ya intro nahi):`;
+  try { await sock.sendPresenceUpdate('composing', chatId); } catch { /* ignore */ }
+  const ans = await AI.chatReply(prompt);
+  try { await sock.sendPresenceUpdate('paused', chatId); } catch { /* ignore */ }
+  if (!ans) return;
+  const clean = ans.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').replace(/^["“”]+|["“”]+$/g, '').slice(0, 600).trim();
+  if (!clean) return;
+  st.mem.push({ who: name, text: item.text.slice(0, 120) }, { who: 'its Mahtab', text: clean.slice(0, 120) });
+  if (st.mem.length > 10) st.mem = st.mem.slice(-10);
+  await sock.sendMessage(chatId, { text: clean }, { quoted: item.msg }).catch(() => {});
 }
 
 // Pehchan repair: kuch members ke message me asli number aata hi nahi (sirf
