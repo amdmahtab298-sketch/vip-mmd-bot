@@ -172,6 +172,30 @@ module.exports = [
         // Pehle direct — ek hi page fetch + seedha CDN download = sabse fast.
         let r = await cobalt.kwaiDirect(url, onProgress);
         if (!r || !r.buffer) {
+          // Photo-slideshow post ho to Kuaishou ke share-API wala raasta try karo
+          const kp = await cobalt.kwaiPhotoPost(url).catch(() => null);
+          if (kp && kp.type === 'video' && kp.urls.length) {
+            await setStatus('⬇️ Is post me video mila — download kar raha hoon...');
+            for (const vu of kp.urls) {
+              const b = await cobalt.downloadToBuffer(vu, 'https://www.kuaishou.com/');
+              if (b) { r = { buffer: b, filename: 'kwai.mp4' }; break; }
+            }
+          } else if (kp && kp.type === 'images' && kp.urls.length) {
+            await setStatus(`📸 Ye ek photo post hai — ${kp.urls.length} photo bhej raha hoon...`);
+            let sent = 0;
+            for (const iu of kp.urls) {
+              const b = await cobalt.downloadToBuffer(iu, 'https://www.kuaishou.com/');
+              if (b) {
+                await H.sendImage(sock, chatId, b, sent === 0 ? '📸 Kwai photo post' + (kp.caption ? '\n' + kp.caption.slice(0, 200) : '') : '', msg).catch(() => {});
+                sent++;
+              }
+            }
+            if (sent) { await setStatus('✅ Ho gaya! Photos bhej di hain 👆'); return; }
+          } else if (kp && kp.type === 'blocked') {
+            // Kuaishou ne khud mana kiya — asli wajah saaf batao, link ko dosh mat do
+            await setStatus('📸 Ye ek *photo-slideshow* post hai, aur Kuaishou ne is par login ki deewaar laga rakhi hai.\nUnke apne website par bhi ye bina login ke nahi khulta (maine khud jaanch karke dekha hai) — isliye iska download bina Kuaishou account ke mumkin nahi.\n\n🎬 Koi *video* wala Kwai/Kuaishou link bhejo, wo turant download hoga.');
+            return;
+          }
           await setStatus('🔄 Direct tareeka nahi chala — dusra tareeka try kar raha hoon...');
           r = await cobalt.cobaltDownload(url, { quality: qualityOf(text) });
         }
