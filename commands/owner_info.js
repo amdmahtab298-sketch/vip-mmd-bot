@@ -69,7 +69,7 @@ Ek saath tez-tez message ya ek hi baat baar-baar mat bhejo. Flood par warning mi
 Koi bhi link, promotion ya apne channel/group ka prachar admin ki permission ke bina mat daalo — delete ho jayega.
 
 4️⃣ *Sticker spam nahi* 🎭
-Ek saath dher saare sticker mat bhejo. Kuch stickers group me banned hain — bhejte hi delete ho jayenge, baar-baar bhejne par warning milegi aur teesri baar group se remove kar diya jayega.
+Ek saath dher saare sticker mat bhejo. Kuch stickers group me banned hain — bhejte hi delete ho jayenge; 3 warning ke baad bhi bheja to group se remove kar diya jayega, aur 24 ghante baad bot khud wapas add kar dega.
 
 5️⃣ *Sabse respect se baat karo* 🤝
 Kisi ki insult, personal attack ya ladai-jhagda nahi. Behes ho to admin ko bulao, khud judge mat bano.

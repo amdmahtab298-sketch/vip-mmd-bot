@@ -328,8 +328,50 @@ const isOwnerMsg = (sock, msg, sender) => {
 // pad jati aur kuch stickers bina delete hue nikal jate the.
 // Ab: pehchan turant (sync hash), delete ka kaam background me PARALLEL
 // (ek saath max 6, lambay retry ke saath), warning 60s me 1 baar (spam-rok).
-const stickerWarnAt = new Map(); // `${chatId}:${sender}` -> aakhri warning ka time (60s me 1 warning = 1 strike-episode)
-const stickerStrikes = new Map(); // `${chatId}:${sender}` -> { n, firstAt } (warning 24h tak rehti hai; 3rd strike = REMOVE — user ka niyam 2026-11-27)
+const stickerWarnAt = new Map(); // `${chatId}:${sender}` -> aakhri remove-ghosna ka time (burst me ghosna 60s me 1 hi baar)
+const stickerStrikes = new Map(); // `${chatId}:${sender}` -> { n, firstAt } (24h window; 3 warning, 4th bhejne par REMOVE + 24h baad auto re-add — user ka FINAL niyam 2026-11-27)
+const stickerReadd = []; // [{ chatId, jid, num, at }] — banned-sticker par remove hue members; 24h baad bot khud wapas add karega (KV 'stickerReadd' me persist, restart par bhi yaad rahe)
+let stickerReaddLoaded = false;
+async function loadStickerReadd() {
+  if (stickerReaddLoaded) return;
+  stickerReaddLoaded = true;
+  try {
+    if (KV.kv) {
+      const arr = await KV.kv.get('stickerReadd');
+      if (Array.isArray(arr)) for (const e of arr) { if (e && e.chatId && e.jid && e.at) stickerReadd.push(e); }
+      if (stickerReadd.length) console.log(`🧩 sticker auto re-add pending: ${stickerReadd.length}`);
+    }
+  } catch { /* list na mile to khaali se shuru */ }
+}
+async function saveStickerReadd() {
+  try { if (KV.kv) await KV.kv.set('stickerReadd', stickerReadd); } catch { /* persist fail par in-memory list chalti rahegi */ }
+}
+async function processStickerReadds(sock) {
+  if (!sock || !stickerReadd.length) return;
+  const now = Date.now();
+  for (const e of [...stickerReadd]) {
+    if (now - e.at < 24 * 60 * 60 * 1000) continue;
+    try {
+      const res = await sock.groupParticipantsUpdate(e.chatId, [e.jid], 'add');
+      const status = String((res && res[0] && res[0].status) || '200');
+      stickerReadd.splice(stickerReadd.indexOf(e), 1);
+      await saveStickerReadd();
+      if (status === '200') {
+        console.log(`🧩 sticker auto re-add ho gaya: ${e.num}`);
+        await sock.sendMessage(e.chatId, { text: `✅ @${e.num} ke 24 ghante pure ho gaye — banned sticker wali removal khatm, unhe group me wapas add kar diya gaya hai.`, mentions: [e.jid] }).catch(() => {});
+      } else if (status === '409') {
+        console.log(`🧩 sticker re-add: ${e.num} pehle se group me hai`);
+      } else {
+        // Privacy setting ki wajah se seedha add nahi hua — invite link DM karo
+        console.log(`🧩 sticker re-add direct fail (status ${status}): ${e.num} — invite link DM try`);
+        try {
+          const code = await sock.groupInviteCode(e.chatId);
+          await sock.sendMessage(e.jid, { text: `Namaste! Banned sticker ki wajah se tumhe group se 24 ghante ke liye remove kiya gaya tha — samay pura ho gaya hai. Is link se group me wapas aa jao: https://chat.whatsapp.com/${code}` });
+        } catch (e2) { console.log('sticker re-add invite DM fail:', e2.message); }
+      }
+    } catch (err) { console.log('sticker re-add fail (agle check me phir try):', err.message); }
+  }
+}
 let stickerJobs = 0;
 const MAX_STICKER_JOBS = 6;
 
@@ -345,41 +387,50 @@ async function enforceStickerBan(sock, msg, chatId, sender, banned, knownHash) {
     const deleted = await H.deleteMessageForEveryone(sock, msg);
     if (deleted) {
       console.log(`🧩 banned sticker deleted: ${senderNum(sender)} in group`);
-      // Strike ladder (user ka niyam, 2026-11-27): DELETE har banned sticker ka
-      // hota rahega, lekin warning/strike 60s me ek hi baar gini jayegi — ek
-      // saath bheje gaye 4-5 sticker = EK strike (warna pehli warning dikhne se
-      // pehle hi banda 3 strike kha lega). Strike 1-2 = warning, 3rd strike =
-      // group se REMOVE. Warnings 24h tak rehti hain, pehle expire nahi hotin.
+      // Strike ladder (user ka FINAL niyam, 2026-11-27): har bheja gaya banned
+      // sticker = 1 strike, ginati 24 ghante ke window me chalti hai. Pehle 3
+      // sticker par sirf warning (3rd = aakhri warning); 3 ke BAAD wala sticker
+      // (4th) bhejte hi group se REMOVE. Remove hue member ka number system
+      // yaad rakhta hai aur 24 ghante baad bot use khud group me wapas ADD kar
+      // deta hai. Remove wali ghosna/attempt burst me 60s me ek hi baar hoti
+      // hai, lekin ginati har sticker par badhti rehti hai.
       const wk = chatId + ':' + sender;
       const now = Date.now();
-      if (now - (stickerWarnAt.get(wk) || 0) > 60000) {
-        stickerWarnAt.set(wk, now);
-        let st = stickerStrikes.get(wk);
-        if (!st || now - st.firstAt > 24 * 60 * 60 * 1000) st = { n: 0, firstAt: now };
-        st.n += 1;
-        stickerStrikes.set(wk, st);
-        console.log(`🧩 sticker strike ${st.n}/3: ${senderNum(sender)}`);
-        if (st.n >= 3) {
+      let st = stickerStrikes.get(wk);
+      if (!st || now - st.firstAt > 24 * 60 * 60 * 1000) st = { n: 0, firstAt: now };
+      st.n += 1;
+      stickerStrikes.set(wk, st);
+      console.log(`🧩 sticker strike ${st.n}: ${senderNum(sender)}`);
+      if (st.n >= 4) {
+        if (now - (stickerWarnAt.get(wk) || 0) > 60000) {
+          stickerWarnAt.set(wk, now);
           await sock.sendMessage(chatId, {
-            text: `⛔ @${senderNum(sender)} tumne *3 baar banned sticker* bheja hai — group ke rules ke hisaab se tumhe group se *REMOVE* kiya ja raha hai.`,
+            text: `⛔ @${senderNum(sender)} tumne *3 se zyada baar* banned sticker bheja hai — group ke rules ke hisaab se tumhe group se *REMOVE* kiya ja raha hai.\n🕐 24 ghante baad tumhe group me wapas add kar diya jayega.`,
             mentions: [sender],
           }).catch(() => {});
           const removed = await sock.groupParticipantsUpdate(chatId, [sender], 'remove').then(() => true).catch(() => false);
           if (removed) {
-            console.log(`⛔ sticker 3rd-strike REMOVE: ${senderNum(sender)}`);
+            console.log(`⛔ sticker REMOVE (3+ strikes): ${senderNum(sender)} — 24h baad auto re-add`);
+            await loadStickerReadd();
+            const pk = H.pointsKeyFor(msg, sender, store.lidToPhone);
+            const addJid = (pk && pk.key ? pk.key : senderNum(sender)) + '@s.whatsapp.net';
+            const oldIdx = stickerReadd.findIndex((x) => x.chatId === chatId && x.jid === addJid);
+            if (oldIdx >= 0) stickerReadd.splice(oldIdx, 1);
+            stickerReadd.push({ chatId, jid: addJid, num: senderNum(sender), at: Date.now() });
+            await saveStickerReadd();
           } else {
             await sock.sendMessage(chatId, {
-              text: `⚠️ @${senderNum(sender)} ko 3 baar banned sticker bhejne par remove karna tha, lekin bot is group me admin nahi hai. Koi admin inhe group se hata de.`,
+              text: `⚠️ @${senderNum(sender)} ko banned sticker baar-baar bhejne par remove karna tha, lekin bot is group me admin nahi hai. Koi admin inhe group se hata de.`,
               mentions: [sender],
             }).catch(() => {});
             console.log(`⛔ sticker remove FAIL (bot admin nahi): ${senderNum(sender)}`);
           }
-        } else {
-          await sock.sendMessage(chatId, {
-            text: `🚫 @${senderNum(sender)} ye sticker is group me banned hai! (Warning ${st.n}/3)${st.n === 2 ? '\n⚠️ Ye *aakhri warning* hai — ek aur baar banned sticker bheja to seedha group se *REMOVE* kar diye jaoge.' : ''}`,
-            mentions: [sender],
-          }).catch(() => {});
         }
+      } else {
+        await sock.sendMessage(chatId, {
+          text: `🚫 @${senderNum(sender)} ye sticker is group me banned hai! (Warning ${st.n}/3)${st.n === 3 ? '\n⚠️ Ye *aakhri warning* hai — ek aur baar banned sticker bheja to group se *REMOVE* kar diye jaoge (24 ghante baad wapas add ho jaoge).' : ''}`,
+          mentions: [sender],
+        }).catch(() => {});
       }
     }
   } catch { /* ignore */ } finally {
@@ -1372,6 +1423,10 @@ setInterval(async () => {
       }
     }
     if (engageDone.size > 500) engageDone.clear();
+
+    // ---- Banned-sticker auto re-add: remove ke 24 ghante baad wapas add ----
+    await loadStickerReadd();
+    await processStickerReadds(sock);
   } catch { /* scheduler kabhi rukna nahi chahiye */ }
 }, 30000);
 
