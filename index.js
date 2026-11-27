@@ -1078,6 +1078,13 @@ async function startSock() {
       // group me wajah ke saath batayega. Welcome use nahi jayega. ----
       if (action === 'add') await loadStickerReadd();
       if (action === 'add' && stickerReadd.length) {
+        // Add kisne kiya? (event ke author/authorPn se pata chalta hai) — agar
+        // OWNER ne khud add kiya hai to penalty yahin khatm, bot nahi hatega.
+        const myLidDigits = (sock.user?.lid || '').split('@')[0].split(':')[0];
+        const addedByOwner = [u.author, u.authorPn].filter(Boolean).some((a) => {
+          const d = String(a).split('@')[0].split(':')[0];
+          return d === ownerNum() || (myLidDigits && d === myLidDigits) || senderNum(a) === ownerNum();
+        });
         const kept = [];
         for (const p of participants || []) {
           const jid = typeof p === 'string' ? p : (p.phoneNumber || p.id || p.lid || '');
@@ -1087,6 +1094,14 @@ async function startSock() {
               || (typeof p !== 'string' && (x.jid === p.phoneNumber || x.num === senderNum(p.lid || '') || x.num === senderNum(p.id || '')))));
           }
           if (e && Date.now() - e.at < 24 * 60 * 60 * 1000) {
+            if (addedByOwner) {
+              // Owner ne khud add kiya hai — penalty yahin khatm, bot nahi hatega.
+              stickerReadd.splice(stickerReadd.indexOf(e), 1);
+              await saveStickerReadd();
+              console.log(`🧩 sticker penalty khatm: owner ne khud ${e.num} ko wapas add kiya`);
+              kept.push(p);
+              continue;
+            }
             const bachaMs = e.at + 24 * 60 * 60 * 1000 - Date.now();
             const bachaH = Math.floor(bachaMs / 3600000);
             const bachaM = Math.floor((bachaMs % 3600000) / 60000);
