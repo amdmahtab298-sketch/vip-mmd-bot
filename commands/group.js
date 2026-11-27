@@ -387,7 +387,7 @@ module.exports = [
   },
   {
     name: 'floodguard', aliases: ['flood'], category: 'Group',
-    desc: 'Flood control on/off (default ON hai) — tez-tez message par warning, 3rd par 10 min auto-delete', usage: '.floodguard on/off',
+    desc: 'Flood control on/off (default ON hai) — tez-tez message par warning, 3rd par group se REMOVE', usage: '.floodguard on/off',
     groupOnly: true, adminOnly: true,
     run: async (ctx) => {
       const { args, chatId, store, reply } = ctx;
@@ -398,7 +398,7 @@ module.exports = [
       } else {
         store.floodOff.delete(chatId);
         await KV.persistSet('settings:floodOff', store.floodOff);
-        await reply('🛡️ Flood guard ON! (waise ye default hi ON rehta hai)\n10 second me 7+ message = warning, teesri warning = 10 minute auto-delete.');
+        await reply('🛡️ Flood guard ON! (waise ye default hi ON rehta hai)\n10 second me 7+ message = warning, teesri warning = group se REMOVE.');
       }
     }
   },

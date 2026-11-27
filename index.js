@@ -363,8 +363,7 @@ async function enforceStickerBan(sock, msg, chatId, sender, banned, knownHash) {
 
 // ---------------- Group Guard 2.0 + Points + Scheduler state ----------------
 const floodHits = new Map();    // `${chatId}:${sender}` -> [message timestamps] (10s khidki)
-const floodStrikes = new Map(); // `${chatId}:${sender}` -> { n, firstAt } (1 ghante me gintee)
-const shadowMute = new Map();   // `${chatId}:${sender}` -> mute khatm hone ka time (ms)
+const floodStrikes = new Map(); // `${chatId}:${sender}` -> { n, firstAt } (warning 24 ghante tak rehti hai, pehle expire nahi hoti; 3rd strike = REMOVE — user ka niyam 2026-11-27, purana shadow-mute hata diya)
 const afNoteAt = new Map();     // 'af:'+chatId -> anti-forward notice ka aakhri time
 let activeSock = null;          // scheduler (night mode/engage) ke liye taaza socket
 
@@ -565,14 +564,7 @@ async function handleOne(sock, msg) {
         }
       } catch { /* points fail ho to message nahi rukna chahiye */ }
 
-      // ---- shadow-mute: flood ki saaza chal rahi ho to message seedha delete ----
       const gKey = chatId + ':' + idKey;
-      const muteUntil = shadowMute.get(gKey) || 0;
-      if (muteUntil > Date.now()) {
-        H.deleteMessageForEveryone(sock, msg).catch(() => {});
-        return;
-      }
-      if (muteUntil) shadowMute.delete(gKey);
 
       // ---- flood control: 10 second me 7+ text/sticker (default ON) ----
       const innerG = H.unwrap(msg);
@@ -588,19 +580,34 @@ async function handleOne(sock, msg) {
           if (!admin && !isOwnerMsg(sock, msg, sender)) {
             H.deleteMessageForEveryone(sock, msg).catch(() => {});
             let st = floodStrikes.get(gKey);
-            if (!st || nowF - st.firstAt > 3600000) st = { n: 0, firstAt: nowF };
+            if (!st || nowF - st.firstAt > 24 * 60 * 60 * 1000) st = { n: 0, firstAt: nowF };
             st.n += 1;
             floodStrikes.set(gKey, st);
+            // RULE (user, 2026-11-27): spam strike 1-2 = sirf warning; 3rd strike
+            // = warning ke saath seedha group se REMOVE. Purana shadow-mute
+            // (10 min tak saare message auto-delete) usi ke order par HATA diya —
+            // warning ke baad member ke aam message delete nahi honge.
             if (st.n >= 3) {
-              shadowMute.set(gKey, nowF + 10 * 60000);
-              floodStrikes.delete(gKey);
               await sock.sendMessage(chatId, {
-                text: `🔇 @${senderNum(sender)} flood ki teesri warning! Ab 10 minute tak tumhare saare message auto-delete honge.`,
+                text: `⛔ @${senderNum(sender)} tumne *3 baar spam/flood* kiya hai — group ke rules ke hisaab se tumhe group se *REMOVE* kiya ja raha hai.`,
                 mentions: [sender],
               }).catch(() => {});
+              const removed = await sock.groupParticipantsUpdate(chatId, [sender], 'remove').then(() => true).catch(() => false);
+              if (removed) {
+                // NOTE: strike record yahin delete NAHI hota — warning poore 24h
+                // tak rehti hai (user ka niyam). Member wapas aakar phir spam
+                // kare to agli strike (4th) par phir seedha remove hoga.
+                console.log(`⛔ flood 3rd-strike REMOVE: ${senderNum(sender)}`);
+              } else {
+                await sock.sendMessage(chatId, {
+                  text: `⚠️ @${senderNum(sender)} ko 3 baar spam par remove karna tha, lekin bot is group me admin nahi hai. Koi admin inhe group se hata de.`,
+                  mentions: [sender],
+                }).catch(() => {});
+                console.log(`⛔ flood remove FAIL (bot admin nahi): ${senderNum(sender)}`);
+              }
             } else {
               await sock.sendMessage(chatId, {
-                text: `⚠️ @${senderNum(sender)} itne tez-tez message mat bhejo (flood)! Warning ${st.n}/3 — teesri warning par 10 minute ke liye auto-delete lag jayega.`,
+                text: `⚠️ @${senderNum(sender)} itne tez-tez message mat bhejo (spam/flood)! Warning ${st.n}/3${st.n === 2 ? '\n⚠️ Ye *aakhri warning* hai — ek aur baar spam kiya to seedha group se *REMOVE* kar diye jaoge.' : ' — teesri warning par group se *REMOVE* kar diye jaoge.'}`,
                 mentions: [sender],
               }).catch(() => {});
             }

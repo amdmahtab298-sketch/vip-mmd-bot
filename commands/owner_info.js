@@ -63,7 +63,7 @@ Masti karo, dil khol ke karo… bas ye rules dhyaan me rakho 👇
 Gaali wala message bot khud delete kar dega + warning milegi. Baar-baar karne par admin action lega.
 
 2️⃣ *Spam / flood nahi* 🚫
-Ek saath tez-tez message ya ek hi baat baar-baar mat bhejo. Flood par warning milegi, teesri baar 10 minute tak tumhare message auto-delete honge.
+Ek saath tez-tez message ya ek hi baat baar-baar mat bhejo. Flood par warning milegi, teesri baar group se remove kar diya jayega.
 
 3️⃣ *Bina permission link nahi* 🔗
 Koi bhi link, promotion ya apne channel/group ka prachar admin ki permission ke bina mat daalo — delete ho jayega.
