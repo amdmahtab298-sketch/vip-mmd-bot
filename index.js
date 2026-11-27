@@ -693,7 +693,7 @@ async function handleOne(sock, msg) {
     }
     // Admin commands: group admin/owner (superadmin) ke alawa BOT OWNER bhi chala
     // sakta hai — chahe wo us group me admin ho ya na ho (user ka order, 2026-10-31).
-    if (cmd.adminOnly && !(await H.isGroupAdmin(sock, chatId, sender)) && !isOwnerMsg(sock, msg, sender)) {
+    if (cmd.adminOnly && !isOwnerMsg(sock, msg, sender) && !(await H.isGroupAdmin(sock, chatId, sender))) {
       await H.sendText(sock, chatId, '👮 Ye command sirf group admin chala sakte hain.', msg);
       return;
     }
@@ -761,6 +761,13 @@ async function startSock() {
     // (2026-10-28 ke Render logs me connect ke 1s baad yahi hua tha).
     syncFullHistory: false,
     markOnlineOnConnect: false,
+    // Group jaankari hamesha hamare timeout-armored cache se — Baileys ki apni
+    // metadata query v7 me latak sakti hai (2026-11-27 group fix).
+    cachedGroupMetadata: async (jid) => {
+      const md = await H.groupMeta(currentSock, jid);
+      if (!md) throw new Error('group metadata unavailable (timeout)');
+      return md;
+    },
   });
   currentSock = sock; // web UI ke /api/pair ke liye
 
@@ -768,14 +775,35 @@ async function startSock() {
   // har outbound message ka ID seenMsgIds me daal do, echo aane par skip ho jayega.
   const _sendMessage = sock.sendMessage.bind(sock);
   sock.sendMessage = async (...args) => {
-    const sent = await _sendMessage(...args);
+    // Group bhejne par Baileys ko hamari (timeout-armored, cached) group
+    // jaankari use karne do — uski apni metadata query v7 me latak sakti hai.
     try {
-      if (sent?.key?.id) {
-        seenMsgIds.add(sent.key.id);
-        if (seenMsgIds.size > 300) seenMsgIds.delete(seenMsgIds.values().next().value);
+      if (typeof args[0] === 'string' && args[0].endsWith('@g.us')) {
+        const o = args[2] || {};
+        if (o.useCachedGroupMetadata === undefined) { o.useCachedGroupMetadata = true; args[2] = o; }
       }
     } catch {}
-    return sent;
+    // HARD TIMEOUT 60s: latka hua send ab chup-chaap nahi marega — error
+    // bankar log hoga aur upar ke fallback chalenge (2026-11-27 fix).
+    let timer = null;
+    try {
+      const sent = await Promise.race([
+        _sendMessage(...args),
+        new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('send timeout 60s')), 60000); }),
+      ]);
+      try {
+        if (sent?.key?.id) {
+          seenMsgIds.add(sent.key.id);
+          if (seenMsgIds.size > 300) seenMsgIds.delete(seenMsgIds.values().next().value);
+        }
+      } catch {}
+      return sent;
+    } catch (e) {
+      if (e && e.message === 'send timeout 60s') console.log(`⏱️ send TIMEOUT (60s): ${args[0]}`);
+      throw e;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   };
 
   // Pairing code AUTO-generate BAND (2026-10-28): pehle har fresh start par code
@@ -876,11 +904,16 @@ async function startSock() {
       // purani history par haath nahi lagega.
       const nowSec = Date.now() / 1000;
       const fresh = (upsert.messages || []).filter((m) => {
-        if (!m.key || m.key.fromMe) return false;
+        if (!m.key) return false;
         const tsRaw = m.messageTimestamp;
         const ts = typeof tsRaw === 'number' ? tsRaw
           : (tsRaw && typeof tsRaw.toNumber === 'function' ? tsRaw.toNumber() : parseInt(tsRaw || '0', 10));
-        return ts && (nowSec - ts) < 120;
+        if (!(ts && (nowSec - ts) < 120)) return false;
+        if (!m.key.fromMe) return true;
+        // Owner ke apne command kabhi-kabhi append kist me hi aate hain —
+        // taaza command hon to process karo (seenMsgIds duplicate rokega);
+        // owner ki aam chat append se process nahi hogi (2026-11-27 fix).
+        try { return getText(m).trim().startsWith(config.prefix); } catch { return false; }
       });
       if (fresh.length) {
         console.log(`📥 append kist me ${fresh.length} taaza message — enforcement check ho raha hai`);
