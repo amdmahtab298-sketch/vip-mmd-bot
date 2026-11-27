@@ -72,7 +72,7 @@ Koi bhi link, promotion ya apne channel/group ka prachar admin ki permission ke 
 Ek saath dher saare sticker mat bhejo. Kuch stickers group me banned hain — bhejte hi delete ho jayenge; 3 warning ke baad bhi bheja to group se remove kar diya jayega, aur 24 ghante baad bot khud wapas add kar dega.
 
 5️⃣ *Sabse respect se baat karo* 🤝
-Kisi ki insult, personal attack ya ladai-jhagda nahi. Behes ho to admin ko bulao, khud judge mat bano.
+Kisi ki insult, personal attack ya ladai-jhagda nahi. Khaas taur par *Bihar aur Bihariyon ke baare me galat ya mazak udane wali baat bilkul nahi* — AI pakad lega, delete + warning milegi aur 3 warning ke baad group se remove kar diya jayega. Behes ho to admin ko bulao, khud judge mat bano.
 
 6️⃣ *Personal cheezein share nahi* 🔒
 Kisi ka number, photo ya private baat bina uski permission ke group me mat daalo.

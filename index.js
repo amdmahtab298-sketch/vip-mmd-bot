@@ -521,15 +521,79 @@ function aiSuspect(text) {
   } catch { return false; }
 }
 
+// ---------------- Bihar-guard: suspicion filter + karwai ----------------
+// Message me Bihar ka zikr ho tabhi Gemini se poochho (classifyBiharHate) —
+// AI hi faisla lega ki zikr galat/mazak ke lehje me hai ya normal baat hai.
+function biharSuspect(text) {
+  try {
+    const low = ' ' + String(text).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ') + ' ';
+    return low.includes(' bihar') || String(text).includes('बिहार');
+  } catch { return false; }
+}
+
+// Bihar-guard karwai (user ka niyam, 2026-11-27): Gemini Bihar ke baare me
+// galat/mazak/hate pakde to delete + warning (24h window). Warning 1-3;
+// 3 warning ke BAAD wala (4th) message = group se REMOVE — aur isme sticker
+// wala 24h auto re-add NAHI hai (permanent removal; wapas lena ho to admin
+// ya owner khud add karega).
+async function applyBiharHit(sock, msg, chatId, sender, idKey) {
+  const deleted = await H.deleteMessageForEveryone(sock, msg);
+  if (deleted) {
+    const key = chatId + ':' + idKey;
+    const now = Date.now();
+    let rec = store.biharWarns.get(key);
+    if (!rec || now - rec.firstAt > 24 * 60 * 60 * 1000) rec = { count: 0, firstAt: now };
+    rec.count++;
+    store.biharWarns.set(key, rec);
+    console.log(`🚫 bihar-guard deleted: ${senderNum(sender)} in group (warning ${rec.count})`);
+    if (rec.count >= 4) {
+      await sock.sendMessage(chatId, {
+        text: `⛔ @${senderNum(sender)} tumne *3 warning ke baad bhi* Bihar ke baare me galat bolna band nahi kiya — group ke rules ke hisaab se tumhe group se *REMOVE* kiya ja raha hai.`,
+        mentions: [sender],
+      }).catch(() => {});
+      const removed = await sock.groupParticipantsUpdate(chatId, [sender], 'remove').then(() => true).catch(() => false);
+      if (removed) {
+        store.biharWarns.delete(key);
+        console.log(`⛔ bihar-guard REMOVE: ${senderNum(sender)}`);
+      } else {
+        await sock.sendMessage(chatId, {
+          text: `⚠️ @${senderNum(sender)} ko Bihar ke baare me galat bolne par remove karna tha, lekin bot is group me admin nahi hai. Koi admin inhe group se hata de.`,
+          mentions: [sender],
+        }).catch(() => {});
+        console.log(`⛔ bihar-guard remove FAIL (bot admin nahi): ${senderNum(sender)}`);
+      }
+    } else {
+      await sock.sendMessage(chatId, {
+        text: `⚠️ @${senderNum(sender)} Bihar aur Bihariyon ke baare me galat/mazak wali baat is group me allowed nahi hai! Message delete kar diya gaya. (Warning ${rec.count}/3)${rec.count === 3 ? '\n⚠️ Ye *aakhri warning* hai — ek aur baar aisi baat ki to seedha group se *REMOVE* kar diye jaoge.' : ''}`,
+        mentions: [sender],
+      }).catch(() => {});
+    }
+  }
+  return deleted;
+}
+
 // AI gaali-jaanch background me — ek saath zyada se zyada 3 (bheed ho to
 // chhod do; list wali gaali waise bhi turant pakdi jaati hai). AI haan kahe
 // to admin/owner exemption phir check karke wahi karwai (applyAbuseHit).
 let aiAbuseJobs = 0;
 const MAX_AI_ABUSE_JOBS = 3;
-async function queueAiAbuseCheck(sock, msg, chatId, sender, idKey, text) {
+async function queueAiAbuseCheck(sock, msg, chatId, sender, idKey, text, flags) {
   if (aiAbuseJobs >= MAX_AI_ABUSE_JOBS) return;
   aiAbuseJobs++;
   try {
+    // Bihar-guard pehle (user ki priority): AI haan kahe to usi ki karwai —
+    // ek message par ek hi action, phir gaali-check nahi hoga.
+    if (flags && flags.bihar) {
+      const bv = await AI.classifyBiharHate(text);
+      if (bv === true) {
+        const bAdmin = await H.isGroupAdmin(sock, chatId, sender);
+        if (bAdmin || isOwnerMsg(sock, msg, sender)) return;
+        const bDone = await applyBiharHit(sock, msg, chatId, sender, idKey);
+        if (bDone) console.log(`AI bihar-guard hit: ${senderNum(sender)} in group - "${String(text).slice(0, 60)}"`);
+        return;
+      }
+    }
+    if (flags && !flags.abuse) return;
     const verdict = await AI.classifyAbuse(text);
     if (verdict !== true) return;
     const admin = await H.isGroupAdmin(sock, chatId, sender);
@@ -761,8 +825,14 @@ async function handleOne(sock, msg) {
     // 3rd = remove) jo list wali gaali par hoti hai. Background me chalta hai
     // (await nahi) taaki chat ki speed na ruke; AI fail/timeout = koi action
     // nahi. Per-group band karne ke liye: .antiabuse ai off
-    if (isGroup && text && !store.antiabuseOff.has(chatId) && !store.aiAbuseOff.has(chatId) && !(dotCmd && registry.has(dotCmd)) && !isOwnerMsg(sock, msg, sender) && AI.enabled() && aiSuspect(text)) {
-      queueAiAbuseCheck(sock, msg, chatId, sender, idKey, text); // await NAHI — pipeline tez rahe
+    // Saath me Bihar-guard bhi yahi se chalta hai: message me Bihar ka zikr
+    // (biharSuspect) ho to Gemini pehle ye jaanchega ki baat galat/mazak ke
+    // lehje me hai ya nahi — haan to delete + warning, 3 warning ke baad
+    // REMOVE (koi auto re-add nahi). Band karne ke liye: .biharguard off
+    const abuseAiOk = !store.antiabuseOff.has(chatId) && !store.aiAbuseOff.has(chatId) && aiSuspect(text);
+    const biharAiOk = !store.biharOff.has(chatId) && biharSuspect(text);
+    if (isGroup && text && !(dotCmd && registry.has(dotCmd)) && !isOwnerMsg(sock, msg, sender) && AI.enabled() && (abuseAiOk || biharAiOk)) {
+      queueAiAbuseCheck(sock, msg, chatId, sender, idKey, text, { abuse: abuseAiOk, bihar: biharAiOk }); // await NAHI — pipeline tez rahe
     }
 
     // ---- hook: savage names (Mia Khalifa / Johnny Sins -> delete + savage reply) ----
@@ -983,6 +1053,7 @@ async function startSock() {
           store.botOffChats = new Set(await KV.loadSet('settings:botOff'));
           store.aiMahtabOn = new Set(await KV.loadSet('settings:aiMahtabOn'));
           store.aiAbuseOff = new Set(await KV.loadSet('settings:aiAbuseOff'));
+          store.biharOff = new Set(await KV.loadSet('settings:biharOff'));
           const lm = await KV.loadLidMap();
           console.log(`🛡️ Guard settings loaded: night=${store.nightOn.size}, engage=${store.engageOn.size}, antiforward=${store.antiforwardOn.size} group(s), botoff=${store.botOffChats.size} group(s), LID mapping=${lm}`);
           console.log(AI.enabled() ? '🤖 AI features: ON (Gemini) — YouTube quiz + update alerts chalenge' : '🤖 AI features: OFF (GEMINI_API_KEY nahi hai) — quiz bank se chalega, update alerts band');

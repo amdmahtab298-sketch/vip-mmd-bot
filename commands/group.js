@@ -386,6 +386,27 @@ module.exports = [
     }
   },
   {
+    name: 'biharguard', aliases: [], category: 'Group',
+    desc: 'Bihar/Bihariyon ke baare me galat baat AI (Gemini) pakdega — delete + warning; 3 warning ke baad group se remove (default ON)', usage: '.biharguard on/off',
+    groupOnly: true, adminOnly: true,
+    run: async (ctx) => {
+      const { args, chatId, store, reply } = ctx;
+      if (args[0] === 'off') {
+        store.biharOff.add(chatId);
+        await KV.persistSet('settings:biharOff', store.biharOff);
+        await reply('🛡️ Bihar-Guard OFF! Ab Bihar ke baare me galat baat par AI action nahi lega.');
+      } else if (args[0] === 'on') {
+        store.biharOff.delete(chatId);
+        await KV.persistSet('settings:biharOff', store.biharOff);
+        await reply('🛡️ Bihar-Guard ON! Bihar/Bihariyon ke baare me galat ya mazak wali baat AI pakdega — delete + warning; *3 warning ke baad member group se remove* ho jayega (bot ka group admin hona zaroori hai).');
+      } else {
+        await reply(store.biharOff.has(chatId)
+          ? '🛡️ Bihar-Guard abhi OFF hai. ON karne ke liye: .biharguard on'
+          : '🛡️ Bihar-Guard abhi ON hai (default) — Bihar ke baare me galat baat = AI delete + warning, 3 warning ke baad = group se remove. Band karne ke liye: .biharguard off');
+      }
+    }
+  },
+  {
     name: 'floodguard', aliases: ['flood'], category: 'Group',
     desc: 'Flood control on/off (default ON hai) — tez-tez message par warning, 3rd par group se REMOVE', usage: '.floodguard on/off',
     groupOnly: true, adminOnly: true,
