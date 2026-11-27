@@ -4,6 +4,12 @@ const KV = require('../lib/kv');
 const AI = require('../lib/ai');
 const crypto = require('crypto');
 
+// Error par chhota sa jawab (owner_info.js jaisa hi helper — ye file me
+// pehle missing tha, isiliye .boton/.botoff/.itsmahtab crash ho rahe the)
+async function safeErr(reply) {
+  try { await reply('❌ Kuch galat ho gaya, dobara try karo.'); } catch (e) {}
+}
+
 function targetFrom(msg, args) {
   const q = H.getQuotedSender(msg);
   if (q) return q;
@@ -223,7 +229,7 @@ module.exports = [
   },
   {
     name: 'antiabuse', aliases: ['nogaali'], category: 'Group',
-    desc: 'Gaali-galoj auto-delete + warning (default ON)', usage: '.antiabuse on/off',
+    desc: 'Gaali-galoj auto-delete + warning; 3rd gaali par group se remove (default ON)', usage: '.antiabuse on/off',
     groupOnly: true, adminOnly: true,
     run: async (ctx) => {
       const { args, chatId, store, reply } = ctx;
@@ -232,11 +238,11 @@ module.exports = [
         await reply('🚫 Anti-abuse OFF! Ab gaali wale message delete nahi honge.');
       } else if (args[0] === 'on') {
         store.antiabuseOff.delete(chatId);
-        await reply('🚫 Anti-abuse ON! Gaali wala message auto-delete hoga + warning milegi (bot ka group admin hona zaroori hai).');
+        await reply('🚫 Anti-abuse ON! Gaali wala message auto-delete hoga + warning milegi; *3rd gaali par member group se remove* ho jayega (bot ka group admin hona zaroori hai).');
       } else {
         await reply(store.antiabuseOff.has(chatId)
           ? '🚫 Anti-abuse abhi OFF hai. ON karne ke liye: .antiabuse on'
-          : '🚫 Anti-abuse abhi ON hai (default) — gaali = delete + warning. Band karne ke liye: .antiabuse off');
+          : '🚫 Anti-abuse abhi ON hai (default) — gaali = delete + warning, 3rd gaali = group se remove. Band karne ke liye: .antiabuse off');
       }
     }
   },
@@ -454,7 +460,7 @@ module.exports = [
         } else {
           await reply(`🤖 *its Mahtab AI* is group me abhi: *${store.aiMahtabOn.has(chatId) ? 'CHALU ✅' : 'BAND ❌'}*\nChalane ke liye: .itsmahtab on\nBand karne ke liye: .itsmahtab off`);
         }
-      } catch (e) { await safeErr(ctx.reply); }
+      } catch (e) { console.log('cmd inner err:', e.message); await safeErr(ctx.reply); }
     }
   },
   {
@@ -470,7 +476,7 @@ module.exports = [
         store.botOffChats.add(chatId);
         await KV.persistSet('settings:botOff', store.botOffChats);
         await reply('🔴 *Bot OFF ho gaya — is group ke liye.*\nAb bot yahan bilkul chup rahega: na koi command chalega, na gaali delete hogi, na points milenge, na welcome aayega.\n\n🟢 Wapas chalane ke liye sirf admin/owner *.boton* likhe — tab tak ye band hi rahega (bot band-ho-kar chale, tab bhi).');
-      } catch (e) { await safeErr(ctx.reply); }
+      } catch (e) { console.log('cmd inner err:', e.message); await safeErr(ctx.reply); }
     }
   },
   {
@@ -486,24 +492,7 @@ module.exports = [
         store.botOffChats.delete(chatId);
         await KV.persistSet('settings:botOff', store.botOffChats);
         await reply('🟢 *Bot ON ho gaya!*\nIs group me saare commands, gaali-suraksha, points aur baaki sab phir se chaalu. 🎉');
-      } catch (e) { await safeErr(ctx.reply); }
-    }
-  },
-  {
-    name: 'abusepunish', aliases: ['gaalisaza'], category: 'Group',
-    desc: 'Gaali-saza seedhi on/off — 10+ gaali = 1h spam, phir 3h, phir 5h, phir group se remove', usage: '.abusepunish on/off',
-    groupOnly: true, adminOnly: true,
-    run: async (ctx) => {
-      const { args, chatId, store, reply } = ctx;
-      if (args[0] === 'off') {
-        store.abusePunishOn.delete(chatId);
-        await KV.persistSet('settings:abusePunishOn', store.abusePunishOn);
-        await reply('⚖️ Gaali-saza seedhi OFF! Ab is group me sirf delete + warning chalega (purana system).');
-      } else {
-        store.abusePunishOn.add(chatId);
-        await KV.persistSet('settings:abusePunishOn', store.abusePunishOn);
-        await reply('⚖️ Gaali-saza seedhi ON!\nIs group me ab ye niyam chalega:\n• *10 se zyada gaali* = 1 ghante ka SPAM (is dauran gaali wala message hi delete hoga, aam baat chalegi)\n• Spam ke dauran phir gaali = spam *3 ghante*\n• Phir gaali = spam *5 ghante*\n• Phir bhi gaali = rule-todne ka sandesh + group se *REMOVE*\n(Admin aur owner isse bahar hain. Remove ke liye bot ka group admin hona zaroori hai.)');
-      }
+      } catch (e) { console.log('cmd inner err:', e.message); await safeErr(ctx.reply); }
     }
   },
   {

@@ -365,7 +365,6 @@ async function enforceStickerBan(sock, msg, chatId, sender, banned, knownHash) {
 const floodHits = new Map();    // `${chatId}:${sender}` -> [message timestamps] (10s khidki)
 const floodStrikes = new Map(); // `${chatId}:${sender}` -> { n, firstAt } (1 ghante me gintee)
 const shadowMute = new Map();   // `${chatId}:${sender}` -> mute khatm hone ka time (ms)
-const abuseSpam = new Map();    // `${chatId}:${sender}` -> { until, stage } — gaali-saza seedhi wala spam (stage 1=1h, 2=3h, 3=5h)
 const afNoteAt = new Map();     // 'af:'+chatId -> anti-forward notice ka aakhri time
 let activeSock = null;          // scheduler (night mode/engage) ke liye taaza socket
 
@@ -483,10 +482,6 @@ async function handleOne(sock, msg) {
         return;
       }
       if (muteUntil) shadowMute.delete(gKey);
-      // NOTE: gaali-saza wala spam (abuseSpam) yahan message NAHI rokta — owner ke
-      // kehne par spam ke dauran bhi sirf GAALI wala message delete hoga (neeche
-      // anti-abuse hisse me), aam message aaram se jayega. Spam sirf nigrani ka
-      // samay hai: us dauran phir gaali = seedhi ka agla kadam.
 
       // ---- flood control: 10 second me 7+ text/sticker (default ON) ----
       const innerG = H.unwrap(msg);
@@ -566,10 +561,12 @@ async function handleOne(sock, msg) {
       }
     }
 
-    // ---- hook: anti-abuse ADVANCED (gaali -> delete + warning) ----
-    // Default ON hai har group me (.antiabuse off se band hota hai).
-    // Har gaali par: message delete + warning count badhta hai (24h me reset).
-    // NOTE: user ke kehne par auto-REMOVE hata diya gaya hai (2026-10-28) — sirf delete+warn.
+    // ---- hook: anti-abuse ADVANCED (gaali -> delete + warning; 3rd gaali = REMOVE) ----
+    // Per-group system hai: default ON har group me, .antiabuse off wale group
+    // me kuch nahi hota. Har gaali par: message delete + warning count (24h me
+    // reset). RULE (user, 2026-11-27 FINAL): gaali 1-2 = warning, 3rd gaali =
+    // seedha group se REMOVE. Purana 10-gaali spam-seedhi (.abusepunish) system
+    // usi ke order par pura hata diya gaya hai — koi spam nahi, seedha remove.
     // Admins aur owner exempt hain. Delete tabhi hoga jab bot group admin ho (WhatsApp rule).
     // DOT-BYPASS BAND (2026-11-01): pehle '.' se shuru message is jaanch se bilkul
     // bahar tha — members ne '.Lauda' '.bsdk' likh ke wahi chhed pakad liya. Ab
@@ -590,65 +587,32 @@ async function handleOne(sock, msg) {
           rec.count++;
           store.abuseWarns.set(key, rec);
           console.log(`🚫 abuse deleted: ${senderNum(sender)} in group (warning ${rec.count})`);
-          // ---- Gaali-saza SEEDHI (sirf .abusepunish ON wale groups me) ----
-          // 10 se zyada gaali = 1 ghante ka SPAM (nigrani — sirf gaali delete hoti hai).
-          // Spam ke dauran phir gaali = spam 3 ghante, phir 5 ghante, chauthi
-          // baar = rule-todne ka sandesh + group se REMOVE. Spam khatm ho jaye
-          // to seedhi bhi reset — phir se 10 gaali par hi lagegi.
-          let ladderHandled = false;
-          if (store.abusePunishOn.has(chatId)) {
-            let sp = abuseSpam.get(key);
-            if (sp && sp.until <= now) { abuseSpam.delete(key); sp = null; }
-            if (sp) {
-              ladderHandled = true;
-              if (sp.stage === 1) {
-                abuseSpam.set(key, { until: now + 3 * 60 * 60000, stage: 2 });
-                await sock.sendMessage(chatId, {
-                  text: `🚨 @${senderNum(sender)} SPAM lage hue hone ke baad bhi phir gaali!\nTumhara spam ab *3 ghante* ke liye badha diya gaya hai.\n⚠️ Ek aur gaali par spam *5 ghante* ho jayega — uske baad seedha group se REMOVE hoge.`,
-                  mentions: [sender],
-                }).catch(() => {});
-                console.log(`🚨 abuse ladder stage 2 (3h spam): ${senderNum(sender)}`);
-              } else if (sp.stage === 2) {
-                abuseSpam.set(key, { until: now + 5 * 60 * 60000, stage: 3 });
-                await sock.sendMessage(chatId, {
-                  text: `🚨 @${senderNum(sender)} phir gaali! Tumhara spam ab *5 ghante* ke liye badha diya gaya hai.\n⚠️⚠️ Ye AAKHRI chetaavni hai — ek aur gaali par tumhe group se REMOVE kar diya jayega.`,
-                  mentions: [sender],
-                }).catch(() => {});
-                console.log(`🚨 abuse ladder stage 3 (5h spam): ${senderNum(sender)}`);
-              } else {
-                await sock.sendMessage(chatId, {
-                  text: `⛔ @${senderNum(sender)} tumne baar-baar group ke RULES tode hain — pehle 10 se zyada gaali, phir spam lage hue hone ke baad bhi baar-baar gaali.\nIsliye tumhe group se *REMOVE* kiya ja raha hai.`,
-                  mentions: [sender],
-                }).catch(() => {});
-                const removed = await sock.groupParticipantsUpdate(chatId, [sender], 'remove').then(() => true).catch(() => false);
-                if (removed) {
-                  abuseSpam.delete(key);
-                  store.abuseWarns.delete(key);
-                  console.log(`⛔ abuse ladder REMOVE: ${senderNum(sender)}`);
-                } else {
-                  // Bot admin nahi hai — remove nahi ho paya; spam phir 5 ghante + adminon ko khabar
-                  abuseSpam.set(key, { until: now + 5 * 60 * 60000, stage: 3 });
-                  await sock.sendMessage(chatId, {
-                    text: `⚠️ @${senderNum(sender)} ko remove karna tha lekin bot is group me admin nahi hai — isliye spam 5 ghante ke liye phir laga diya gaya hai. Koi admin inhe group se hata de.`,
-                    mentions: [sender],
-                  }).catch(() => {});
-                  console.log(`⛔ abuse ladder remove FAIL (bot admin nahi): ${senderNum(sender)}`);
-                }
-              }
-            } else if (rec.count > 10) {
-              ladderHandled = true;
-              abuseSpam.set(key, { until: now + 60 * 60000, stage: 1 });
-              store.abuseWarns.set(key, { count: 0, firstAt: now }); // spam ke baad ginati nayi sirre se
+          // ---- RULE (user, 2026-11-27 FINAL): 3rd gaali = seedha REMOVE ----
+          // Koi spam/seedhi nahi (purana .abusepunish system hata diya gaya).
+          // Gaali 1-2 = delete + warning; 3rd gaali par group me wajah bata kar
+          // REMOVE. Ginati 24h window ki hai. Admins/owner exempt (upar check
+          // ho chuka). Remove ke liye bot ka group admin hona zaroori hai —
+          // na ho to admins ko khabar jati hai.
+          if (rec.count >= 3) {
+            await sock.sendMessage(chatId, {
+              text: `⛔ @${senderNum(sender)} tumne *3 baar gaali* di hai — group ke rules ke hisaab se tumhe group se *REMOVE* kiya ja raha hai.`,
+              mentions: [sender],
+            }).catch(() => {});
+            const removed = await sock.groupParticipantsUpdate(chatId, [sender], 'remove').then(() => true).catch(() => false);
+            if (removed) {
+              store.abuseWarns.delete(key);
+              console.log(`⛔ abuse 3rd-gaali REMOVE: ${senderNum(sender)}`);
+            } else {
+              // Bot group admin nahi hai — remove nahi ho paya; admins ko khabar
               await sock.sendMessage(chatId, {
-                text: `🚨 @${senderNum(sender)} tumne group me *10 se zyada baar gaali* di hai!\nAb tumhare number par *1 ghante ke liye SPAM* laga diya gaya hai.\n⚠️ Agar is dauran tumne phir gaali di, to spam *3 ghante* ho jayega — phir *5 ghante* — aur phir bhi gaali di to group se *REMOVE* kar diye jaoge.`,
+                text: `⚠️ @${senderNum(sender)} ko 3 baar gaali par remove karna tha, lekin bot is group me admin nahi hai. Koi admin inhe group se hata de.`,
                 mentions: [sender],
               }).catch(() => {});
-              console.log(`🚨 abuse ladder stage 1 (1h spam): ${senderNum(sender)}`);
+              console.log(`⛔ abuse remove FAIL (bot admin nahi): ${senderNum(sender)}`);
             }
-          }
-          if (!ladderHandled) {
+          } else {
             await sock.sendMessage(chatId, {
-              text: `🚫 @${senderNum(sender)} gaali-galoj allowed nahi hai! Message delete kar diya gaya. (Warning ${rec.count})`,
+              text: `🚫 @${senderNum(sender)} gaali-galoj allowed nahi hai! Message delete kar diya gaya. (Warning ${rec.count}/3)${rec.count === 2 ? '\n⚠️ Ye *aakhri warning* hai — ek aur gaali par seedha group se *REMOVE* kar diye jaoge.' : ''}`,
               mentions: [sender],
             }).catch(() => {});
           }
@@ -844,7 +808,6 @@ async function startSock() {
           store.nightLocked = new Set(await KV.loadSet('settings:nightLocked'));
           store.engageOn = new Set(await KV.loadSet('settings:engageOn'));
           store.ytUpdateOn = new Set(await KV.loadSet('settings:ytUpdateOn'));
-          store.abusePunishOn = new Set(await KV.loadSet('settings:abusePunishOn'));
           store.botOffChats = new Set(await KV.loadSet('settings:botOff'));
           store.aiMahtabOn = new Set(await KV.loadSet('settings:aiMahtabOn'));
           const lm = await KV.loadLidMap();
