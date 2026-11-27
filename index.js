@@ -416,7 +416,7 @@ async function enforceStickerBan(sock, msg, chatId, sender, banned, knownHash) {
             const addJid = (pk && pk.key ? pk.key : senderNum(sender)) + '@s.whatsapp.net';
             const oldIdx = stickerReadd.findIndex((x) => x.chatId === chatId && x.jid === addJid);
             if (oldIdx >= 0) stickerReadd.splice(oldIdx, 1);
-            stickerReadd.push({ chatId, jid: addJid, num: senderNum(sender), at: Date.now() });
+            stickerReadd.push({ chatId, jid: addJid, num: senderNum(sender), at: Date.now(), reason: 'Banned sticker baar-baar bhejna (3 warning ke baad bhi bheja)' });
             await saveStickerReadd();
           } else {
             await sock.sendMessage(chatId, {
@@ -1071,7 +1071,42 @@ async function startSock() {
   sock.ev.on('group-participants.update', async (u) => {
     if (store.botOffChats.has(u.id)) return; // bot band group me welcome/goodbye bhi nahi
     try {
-      const { id, participants, action } = u;
+      let { id, participants, action } = u;
+      // ---- Banned-sticker 24h penalty ki hifazat (user ka niyam, 2026-11-27):
+      // penalty wala member samay se pehle wapas add ho jaye (koi add kare ya
+      // invite link se khud aa jaye) to bot use turant phir remove karega aur
+      // group me wajah ke saath batayega. Welcome use nahi jayega. ----
+      if (action === 'add') await loadStickerReadd();
+      if (action === 'add' && stickerReadd.length) {
+        const kept = [];
+        for (const p of participants || []) {
+          const jid = typeof p === 'string' ? p : (p.phoneNumber || p.id || p.lid || '');
+          let e = null;
+          if (jid) {
+            e = stickerReadd.find((x) => x.chatId === id && (x.jid === jid || x.num === senderNum(jid)
+              || (typeof p !== 'string' && (x.jid === p.phoneNumber || x.num === senderNum(p.lid || '') || x.num === senderNum(p.id || '')))));
+          }
+          if (e && Date.now() - e.at < 24 * 60 * 60 * 1000) {
+            const bachaMs = e.at + 24 * 60 * 60 * 1000 - Date.now();
+            const bachaH = Math.floor(bachaMs / 3600000);
+            const bachaM = Math.floor((bachaMs % 3600000) / 60000);
+            const bachaTxt = bachaH > 0 ? `${bachaH} ghante ${bachaM} minute` : `${bachaM} minute`;
+            const removedAgain = await sock.groupParticipantsUpdate(id, [jid], 'remove').then(() => true).catch(() => false);
+            if (removedAgain) {
+              console.log(`🧩 sticker penalty: ${e.num} samay se pehle wapas aaya — phir remove kar diya`);
+              await sock.sendMessage(id, {
+                text: `🚫 @${e.num} ko abhi wapas nahi liya ja sakta!\n📌 Ye number *24 ghante* ke liye remove kiya gaya hai.\n📝 *Reason:* ${e.reason || 'Banned sticker baar-baar bhejna'}\n⏳ Abhi lagbhag *${bachaTxt}* bache hain — samay pura hote hi bot khud inhe wapas add kar dega.`,
+                mentions: [jid],
+              }).catch(() => {});
+            } else {
+              console.log(`🧩 sticker penalty: ${e.num} ko phir remove nahi kar paya (bot admin nahi?)`);
+            }
+          } else {
+            kept.push(p);
+          }
+        }
+        participants = kept;
+      }
       if (action === 'add' && !store.welcomeOffChats.has(id)) {
         // Welcome har group me default ON hai (.welcome off se band hota hai).
         // Participants naye Baileys me object ({id/lid/phoneNumber}) bhi ho sakte hain.
