@@ -376,6 +376,97 @@ function istDateStr() {
 }
 
 // ---------------- per-message handler ----------------
+// Gaali pakde jaane par karwai — local list aur AI layer dono ke liye EK hi
+// rasta: delete + warning ginati (24h window); 3rd gaali = group se REMOVE.
+// Delete fail ho (bot admin nahi / message pehle hi delete) to warning nahi badhti.
+async function applyAbuseHit(sock, msg, chatId, sender, idKey) {
+  const deleted = await H.deleteMessageForEveryone(sock, msg);
+  if (deleted) {
+    const key = chatId + ':' + idKey;
+    const now = Date.now();
+    let rec = store.abuseWarns.get(key);
+    if (!rec || now - rec.firstAt > 24 * 60 * 60 * 1000) rec = { count: 0, firstAt: now };
+    rec.count++;
+    store.abuseWarns.set(key, rec);
+    console.log(`🚫 abuse deleted: ${senderNum(sender)} in group (warning ${rec.count})`);
+    // ---- RULE (user, 2026-11-27 FINAL): 3rd gaali = seedha REMOVE ----
+    // Koi spam/seedhi nahi (purana .abusepunish system hata diya gaya).
+    // Gaali 1-2 = delete + warning; 3rd gaali par group me wajah bata kar
+    // REMOVE. Ginati 24h window ki hai. Admins/owner exempt (upar check
+    // ho chuka). Remove ke liye bot ka group admin hona zaroori hai —
+    // na ho to admins ko khabar jati hai.
+    if (rec.count >= 3) {
+      await sock.sendMessage(chatId, {
+        text: `⛔ @${senderNum(sender)} tumne *3 baar gaali* di hai — group ke rules ke hisaab se tumhe group se *REMOVE* kiya ja raha hai.`,
+        mentions: [sender],
+      }).catch(() => {});
+      const removed = await sock.groupParticipantsUpdate(chatId, [sender], 'remove').then(() => true).catch(() => false);
+      if (removed) {
+        store.abuseWarns.delete(key);
+        console.log(`⛔ abuse 3rd-gaali REMOVE: ${senderNum(sender)}`);
+      } else {
+        // Bot group admin nahi hai — remove nahi ho paya; admins ko khabar
+        await sock.sendMessage(chatId, {
+          text: `⚠️ @${senderNum(sender)} ko 3 baar gaali par remove karna tha, lekin bot is group me admin nahi hai. Koi admin inhe group se hata de.`,
+          mentions: [sender],
+        }).catch(() => {});
+        console.log(`⛔ abuse remove FAIL (bot admin nahi): ${senderNum(sender)}`);
+      }
+    } else {
+      await sock.sendMessage(chatId, {
+        text: `🚫 @${senderNum(sender)} gaali-galoj allowed nahi hai! Message delete kar diya gaya. (Warning ${rec.count}/3)${rec.count === 2 ? '\n⚠️ Ye *aakhri warning* hai — ek aur gaali par seedha group se *REMOVE* kar diye jaoge.' : ''}`,
+        mentions: [sender],
+      }).catch(() => {});
+    }
+  }
+  return deleted;
+}
+
+// ---------------- anti-abuse AI layer: suspicion filter ----------------
+// Har message Gemini ke paas nahi jata (quota + speed bachane ke liye).
+// Pehle ye halka filter dekhta hai ki message me koi aisi cheez hai jo gaali
+// HO SAKTI hai — list se bahar ke sexual slang, ya community ko nishaana +
+// taana. Nishaan mile tabhi AI final faisla lega (AI.classifyAbuse).
+const AI_SUSPECT_STRONG = ['condom', 'mutth', 'lole', 'chus', 'porn', 'boob', 'nipple', 'havas', 'tharak', 'tharki', 'nanga', 'nangi', 'hijda', 'chhakka', 'suck', 'blowjob', 'handjob', 'jerkoff', 'कंडोम', 'मुट्ठ', 'नंगा', 'नंगी', 'हवस', 'ठरक'];
+const AI_SUSPECT_TARGET = ['bihari', 'बिहारी', 'bihar', 'bhaiya'];
+const AI_SUSPECT_INSULT = ['fate', 'fata', 'nateeja', 'nateeze', 'nateeje', 'galti', 'gande', 'ganda', 'ghatiya', 'ghatia', 'neech', 'faltu', 'bekar', 'bekaar', 'wahiyat', 'aukaat', 'chor'];
+function aiSuspect(text) {
+  try {
+    const norm = normalizeAbuseText(text);
+    const collapsed = collapseAbuse(norm);
+    for (const w of AI_SUSPECT_STRONG) {
+      const nw = normalizeAbuseText(w);
+      if (nw && (norm.includes(nw) || collapsed.includes(collapseAbuse(nw)))) return true;
+    }
+    const low = ' ' + String(text).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ') + ' ';
+    const hasTarget = AI_SUSPECT_TARGET.some((w) => low.includes(w));
+    if (!hasTarget) return false;
+    return AI_SUSPECT_INSULT.some((w) => low.includes(w));
+  } catch { return false; }
+}
+
+// AI gaali-jaanch background me — ek saath zyada se zyada 3 (bheed ho to
+// chhod do; list wali gaali waise bhi turant pakdi jaati hai). AI haan kahe
+// to admin/owner exemption phir check karke wahi karwai (applyAbuseHit).
+let aiAbuseJobs = 0;
+const MAX_AI_ABUSE_JOBS = 3;
+async function queueAiAbuseCheck(sock, msg, chatId, sender, idKey, text) {
+  if (aiAbuseJobs >= MAX_AI_ABUSE_JOBS) return;
+  aiAbuseJobs++;
+  try {
+    const verdict = await AI.classifyAbuse(text);
+    if (verdict !== true) return;
+    const admin = await H.isGroupAdmin(sock, chatId, sender);
+    if (admin || isOwnerMsg(sock, msg, sender)) return;
+    const done = await applyAbuseHit(sock, msg, chatId, sender, idKey);
+    if (done) console.log(`AI abuse hit: ${senderNum(sender)} in group - "${String(text).slice(0, 60)}"`);
+  } catch (e) {
+    console.log('AI abuse check fail:', e.message);
+  } finally {
+    aiAbuseJobs--;
+  }
+}
+
 async function handleOne(sock, msg) {
   try {
     if (!msg.message) return;
@@ -575,50 +666,19 @@ async function handleOne(sock, msg) {
     if (isGroup && !store.antiabuseOff.has(chatId) && !(dotCmd && registry.has(dotCmd)) && hasAbuse(text)) {
       const admin = await H.isGroupAdmin(sock, chatId, sender);
       if (!admin && !isOwnerMsg(sock, msg, sender)) {
-        // FIX (2026-10-28): raw msg.key se delete sirf owner-wale group me chalta tha;
-        // sirf-admin wale group me LID-wala key server reject kar deta tha. Ab helper
-        // pehle asli number (participantAlt) se, fail ho to LID se delete try karta hai.
-        const deleted = await H.deleteMessageForEveryone(sock, msg);
-        if (deleted) {
-          const key = chatId + ':' + idKey;
-          const now = Date.now();
-          let rec = store.abuseWarns.get(key);
-          if (!rec || now - rec.firstAt > 24 * 60 * 60 * 1000) rec = { count: 0, firstAt: now };
-          rec.count++;
-          store.abuseWarns.set(key, rec);
-          console.log(`🚫 abuse deleted: ${senderNum(sender)} in group (warning ${rec.count})`);
-          // ---- RULE (user, 2026-11-27 FINAL): 3rd gaali = seedha REMOVE ----
-          // Koi spam/seedhi nahi (purana .abusepunish system hata diya gaya).
-          // Gaali 1-2 = delete + warning; 3rd gaali par group me wajah bata kar
-          // REMOVE. Ginati 24h window ki hai. Admins/owner exempt (upar check
-          // ho chuka). Remove ke liye bot ka group admin hona zaroori hai —
-          // na ho to admins ko khabar jati hai.
-          if (rec.count >= 3) {
-            await sock.sendMessage(chatId, {
-              text: `⛔ @${senderNum(sender)} tumne *3 baar gaali* di hai — group ke rules ke hisaab se tumhe group se *REMOVE* kiya ja raha hai.`,
-              mentions: [sender],
-            }).catch(() => {});
-            const removed = await sock.groupParticipantsUpdate(chatId, [sender], 'remove').then(() => true).catch(() => false);
-            if (removed) {
-              store.abuseWarns.delete(key);
-              console.log(`⛔ abuse 3rd-gaali REMOVE: ${senderNum(sender)}`);
-            } else {
-              // Bot group admin nahi hai — remove nahi ho paya; admins ko khabar
-              await sock.sendMessage(chatId, {
-                text: `⚠️ @${senderNum(sender)} ko 3 baar gaali par remove karna tha, lekin bot is group me admin nahi hai. Koi admin inhe group se hata de.`,
-                mentions: [sender],
-              }).catch(() => {});
-              console.log(`⛔ abuse remove FAIL (bot admin nahi): ${senderNum(sender)}`);
-            }
-          } else {
-            await sock.sendMessage(chatId, {
-              text: `🚫 @${senderNum(sender)} gaali-galoj allowed nahi hai! Message delete kar diya gaya. (Warning ${rec.count}/3)${rec.count === 2 ? '\n⚠️ Ye *aakhri warning* hai — ek aur gaali par seedha group se *REMOVE* kar diye jaoge.' : ''}`,
-              mentions: [sender],
-            }).catch(() => {});
-          }
-        }
+        await applyAbuseHit(sock, msg, chatId, sender, idKey);
         return;
       }
+    }
+
+    // ---- hook: anti-abuse AI layer (Gemini) — list se aage ki pehchan ----
+    // Local list me na mile, lekin message me gaali ke nishaan hon (aiSuspect),
+    // to Gemini se poochho — AI haan kahe tabhi wahi karwai (delete + warning,
+    // 3rd = remove) jo list wali gaali par hoti hai. Background me chalta hai
+    // (await nahi) taaki chat ki speed na ruke; AI fail/timeout = koi action
+    // nahi. Per-group band karne ke liye: .antiabuse ai off
+    if (isGroup && text && !store.antiabuseOff.has(chatId) && !store.aiAbuseOff.has(chatId) && !(dotCmd && registry.has(dotCmd)) && !isOwnerMsg(sock, msg, sender) && AI.enabled() && aiSuspect(text)) {
+      queueAiAbuseCheck(sock, msg, chatId, sender, idKey, text); // await NAHI — pipeline tez rahe
     }
 
     // ---- hook: savage names (Mia Khalifa / Johnny Sins -> delete + savage reply) ----
@@ -838,6 +898,7 @@ async function startSock() {
           store.ytUpdateOn = new Set(await KV.loadSet('settings:ytUpdateOn'));
           store.botOffChats = new Set(await KV.loadSet('settings:botOff'));
           store.aiMahtabOn = new Set(await KV.loadSet('settings:aiMahtabOn'));
+          store.aiAbuseOff = new Set(await KV.loadSet('settings:aiAbuseOff'));
           const lm = await KV.loadLidMap();
           console.log(`🛡️ Guard settings loaded: night=${store.nightOn.size}, engage=${store.engageOn.size}, antiforward=${store.antiforwardOn.size} group(s), botoff=${store.botOffChats.size} group(s), LID mapping=${lm}`);
           console.log(AI.enabled() ? '🤖 AI features: ON (Gemini) — YouTube quiz + update alerts chalenge' : '🤖 AI features: OFF (GEMINI_API_KEY nahi hai) — quiz bank se chalega, update alerts band');

@@ -229,10 +229,26 @@ module.exports = [
   },
   {
     name: 'antiabuse', aliases: ['nogaali'], category: 'Group',
-    desc: 'Gaali-galoj auto-delete + warning; 3rd gaali par group se remove (default ON)', usage: '.antiabuse on/off',
+    desc: 'Gaali-galoj auto-delete + warning; 3rd gaali par group se remove (default ON). AI pehchan: .antiabuse ai on/off', usage: '.antiabuse on/off',
     groupOnly: true, adminOnly: true,
     run: async (ctx) => {
       const { args, chatId, store, reply } = ctx;
+      if (args[0] === 'ai') {
+        if (args[1] === 'off') {
+          store.aiAbuseOff.add(chatId);
+          await KV.persistSet('settings:aiAbuseOff', store.aiAbuseOff);
+          await reply('🤖 AI gaali-pehchan OFF! Ab sirf list wali gaali hi pakdi jayegi.');
+        } else if (args[1] === 'on') {
+          store.aiAbuseOff.delete(chatId);
+          await KV.persistSet('settings:aiAbuseOff', store.aiAbuseOff);
+          await reply('🤖 AI gaali-pehchan ON! List me na ho, tab bhi Gemini gaali pehchan kar delete + warning dega (3rd gaali = remove).');
+        } else {
+          await reply(store.aiAbuseOff.has(chatId)
+            ? '🤖 AI gaali-pehchan abhi OFF hai. ON karne ke liye: .antiabuse ai on'
+            : '🤖 AI gaali-pehchan abhi ON hai (default) — list ke bahar ki gaali bhi AI pakdega. Band karne ke liye: .antiabuse ai off');
+        }
+        return;
+      }
       if (args[0] === 'off') {
         store.antiabuseOff.add(chatId);
         await reply('🚫 Anti-abuse OFF! Ab gaali wale message delete nahi honge.');
