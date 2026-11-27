@@ -84,7 +84,7 @@ Aisi photo, video ya baat bilkul nahi — sidha delete + warning.
 Dharm, rajneeti ya kisi par bhi ladai karne wale post mat daalo. Group masti ke liye hai, Mahabharat ke liye nahi 😄
 
 9️⃣ *Admin ka faisla aakhiri* 👑
-Admin ki baat maano. Koi dikkat ho to shanti se admin ko personally bolo.
+Admin ki baat maano. Koi dikkat ho to shanti se admin ko personally bolo. *Admin ke baare me bura bolna ya mazak/taana (gulam, chamche type) bilkul nahi* — AI pakad lega, delete + warning milegi aur 3rd galti par group se remove kar diya jayega.
 
 🏆 *Points:* Group me active rehne par points milte hain!
 *.points* — apne points | *.top* — leaderboard

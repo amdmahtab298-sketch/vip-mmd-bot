@@ -407,6 +407,27 @@ module.exports = [
     }
   },
   {
+    name: 'adminguard', aliases: [], category: 'Group',
+    desc: 'Admin ke baare me bura/mazak/taana (gulam, chamche type) AI (Gemini) pakdega — delete + warning; 3rd galti par group se remove (default ON, jahan bot ON hai wahan auto)', usage: '.adminguard on/off',
+    groupOnly: true, adminOnly: true,
+    run: async (ctx) => {
+      const { args, chatId, store, reply } = ctx;
+      if (args[0] === 'off') {
+        store.adminGuardOff.add(chatId);
+        await KV.persistSet('settings:adminGuardOff', store.adminGuardOff);
+        await reply('🛡️ Admin-Guard OFF! Ab admin ke baare me bura bolne par AI action nahi lega.');
+      } else if (args[0] === 'on') {
+        store.adminGuardOff.delete(chatId);
+        await KV.persistSet('settings:adminGuardOff', store.adminGuardOff);
+        await reply('🛡️ Admin-Guard ON! Admin ke baare me bura, mazak ya taana (gulam/chamche type bhi) AI pakdega — delete + warning; *3rd galti par member group se remove* ho jayega (bot ka group admin hona zaroori hai).');
+      } else {
+        await reply(store.adminGuardOff.has(chatId)
+          ? '🛡️ Admin-Guard abhi OFF hai. ON karne ke liye: .adminguard on'
+          : '🛡️ Admin-Guard abhi ON hai (default — jahan bot ON hai wahan ye apne aap ON rehta hai) — admin ke baare me bura bolna = AI delete + warning, 3rd galti = group se remove. Band karne ke liye: .adminguard off');
+      }
+    }
+  },
+  {
     name: 'floodguard', aliases: ['flood'], category: 'Group',
     desc: 'Flood control on/off (default ON hai) — tez-tez message par warning, 3rd par group se REMOVE', usage: '.floodguard on/off',
     groupOnly: true, adminOnly: true,

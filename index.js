@@ -572,6 +572,78 @@ async function applyBiharHit(sock, msg, chatId, sender, idKey) {
   return deleted;
 }
 
+// ---------------- Admin-guard: suspicion filter + karwai ----------------
+// (user ka order, 2026-11-27 — Rakesh ne admins ko 'Gulam'/'Chamche' kaha tha)
+// Har message Gemini ke paas nahi jata. Pehle ye halka filter dekhta hai ki
+// message admin/owner ko nishaana bana SAKTA hai: admin/owner/malik ka zikr,
+// ya taane wale shabd (gulam/chamche type). Reply/mention kisi admin ko ho to
+// bhi jaanch hogi (adminTargeted). Final faisla hamesha Gemini ka
+// (classifyAdminInsult) — neutral/positive zikr par koi action nahi.
+// AUTO-ON: jis group me bot ON hai (.boton state) wahan ye guard default ON
+// hai — manually on nahi karna padta. Band karne ke liye: .adminguard off
+const ADMIN_SUSPECT_WORDS = ['admin', 'admim', 'edmin', 'एडमिन', 'ऐडमिन', 'malik', 'मालिक', 'owner', 'ओनर', 'gulam', 'ghulam', 'गुलाम', 'ग़ुलाम', 'chamcha', 'chamche', 'chamcha', 'चमचा', 'चमचे', 'naukar', 'नौकर', 'group admin'];
+function adminSuspect(text) {
+  try {
+    const low = String(text).toLowerCase();
+    return ADMIN_SUSPECT_WORDS.some((w) => low.includes(w));
+  } catch { return false; }
+}
+
+// Message kisi admin ko reply/mention kar raha hai kya? (metadata cache se —
+// aam taur par network call nahi lagti.) Haan ho to text me 'admin' shabd
+// na hone par bhi AI jaanch banti hai.
+async function adminTargeted(sock, msg, chatId) {
+  try {
+    const quoted = H.getQuotedSender(msg);
+    if (quoted && (await H.isGroupAdmin(sock, chatId, quoted))) return true;
+    for (const jid of H.getMentioned(msg)) {
+      if (await H.isGroupAdmin(sock, chatId, jid)) return true;
+    }
+  } catch { /* ignore */ }
+  return false;
+}
+
+// Admin-guard karwai (user ka FINAL niyam, 2026-11-27): Gemini admin ke
+// baare me bura/mazak/taana pakde to delete + warning (24h window).
+// Warning 1-2 (2nd = aakhri warning); 3rd galti par group me wajah bata kar
+// REMOVE — isme koi auto re-add nahi hai (wapas lena ho to admin/owner khud
+// add karega). Admins/owner khud exempt hain (upar check ho chuka).
+async function applyAdminHit(sock, msg, chatId, sender, idKey) {
+  const deleted = await H.deleteMessageForEveryone(sock, msg);
+  if (deleted) {
+    const key = chatId + ':' + idKey;
+    const now = Date.now();
+    let rec = store.adminWarns.get(key);
+    if (!rec || now - rec.firstAt > 24 * 60 * 60 * 1000) rec = { count: 0, firstAt: now };
+    rec.count++;
+    store.adminWarns.set(key, rec);
+    console.log(`🚫 admin-guard deleted: ${senderNum(sender)} in group (warning ${rec.count})`);
+    if (rec.count >= 3) {
+      await sock.sendMessage(chatId, {
+        text: `⛔ @${senderNum(sender)} tumne *baar-baar admin ke baare me bura bolna* band nahi kiya — 3 warning poori ho gayi hain. Group ke rules ke hisaab se tumhe group se *REMOVE* kiya ja raha hai.`,
+        mentions: [sender],
+      }).catch(() => {});
+      const removed = await sock.groupParticipantsUpdate(chatId, [sender], 'remove').then(() => true).catch(() => false);
+      if (removed) {
+        store.adminWarns.delete(key);
+        console.log(`⛔ admin-guard REMOVE: ${senderNum(sender)}`);
+      } else {
+        await sock.sendMessage(chatId, {
+          text: `⚠️ @${senderNum(sender)} ko admin ke baare me baar-baar bura bolne par remove karna tha, lekin bot is group me admin nahi hai. Koi admin inhe group se hata de.`,
+          mentions: [sender],
+        }).catch(() => {});
+        console.log(`⛔ admin-guard remove FAIL (bot admin nahi): ${senderNum(sender)}`);
+      }
+    } else {
+      await sock.sendMessage(chatId, {
+        text: `⚠️ @${senderNum(sender)} group ke *admin ke baare me bura ya mazak/taana* wali baat is group me allowed nahi hai! Message delete kar diya gaya. (Warning ${rec.count}/3)${rec.count === 2 ? '\n⚠️ Ye *aakhri warning* hai — ek aur baar admin ke baare me aisi baat ki to seedha group se *REMOVE* kar diye jaoge.' : ''}`,
+        mentions: [sender],
+      }).catch(() => {});
+    }
+  }
+  return deleted;
+}
+
 // AI gaali-jaanch background me — ek saath zyada se zyada 3 (bheed ho to
 // chhod do; list wali gaali waise bhi turant pakdi jaati hai). AI haan kahe
 // to admin/owner exemption phir check karke wahi karwai (applyAbuseHit).
@@ -591,6 +663,22 @@ async function queueAiAbuseCheck(sock, msg, chatId, sender, idKey, text, flags) 
         const bDone = await applyBiharHit(sock, msg, chatId, sender, idKey);
         if (bDone) console.log(`AI bihar-guard hit: ${senderNum(sender)} in group - "${String(text).slice(0, 60)}"`);
         return;
+      }
+    }
+    // Admin-guard: message admin ko nishaana bana raha ho (text me nishaan,
+    // ya kisi admin ko reply/mention) tabhi Gemini se poochho. AI haan kahe
+    // to usi ki karwai — ek message par ek hi action, phir aage nahi.
+    if (flags && flags.admin) {
+      const targeted = flags.adminText || (await adminTargeted(sock, msg, chatId));
+      if (targeted) {
+        const av = await AI.classifyAdminInsult(text);
+        if (av === true) {
+          const aAdmin = await H.isGroupAdmin(sock, chatId, sender);
+          if (aAdmin || isOwnerMsg(sock, msg, sender)) return;
+          const aDone = await applyAdminHit(sock, msg, chatId, sender, idKey);
+          if (aDone) console.log(`AI admin-guard hit: ${senderNum(sender)} in group - "${String(text).slice(0, 60)}"`);
+          return;
+        }
       }
     }
     if (flags && !flags.abuse) return;
@@ -829,10 +917,17 @@ async function handleOne(sock, msg) {
     // (biharSuspect) ho to Gemini pehle ye jaanchega ki baat galat/mazak ke
     // lehje me hai ya nahi — haan to delete + warning, 3 warning ke baad
     // REMOVE (koi auto re-add nahi). Band karne ke liye: .biharguard off
+    // Aur Admin-guard bhi yahi se: admin/owner ka zikr ya taana (adminSuspect)
+    // ho, ya message kisi admin ko reply/mention ho, to Gemini jaanchega ki
+    // baat admin ke baare me bura/mazak/taana hai ya nahi — haan to delete +
+    // warning, 3rd galti par REMOVE. Ye guard AUTO-ON hai har group me jahan
+    // bot ON hai; band karne ke liye: .adminguard off
     const abuseAiOk = !store.antiabuseOff.has(chatId) && !store.aiAbuseOff.has(chatId) && aiSuspect(text);
     const biharAiOk = !store.biharOff.has(chatId) && biharSuspect(text);
-    if (isGroup && text && !(dotCmd && registry.has(dotCmd)) && !isOwnerMsg(sock, msg, sender) && AI.enabled() && (abuseAiOk || biharAiOk)) {
-      queueAiAbuseCheck(sock, msg, chatId, sender, idKey, text, { abuse: abuseAiOk, bihar: biharAiOk }); // await NAHI — pipeline tez rahe
+    const adminTextOk = adminSuspect(text);
+    const adminAiOk = !store.adminGuardOff.has(chatId) && (adminTextOk || H.getMentioned(msg).length > 0 || !!H.getQuotedSender(msg));
+    if (isGroup && text && !(dotCmd && registry.has(dotCmd)) && !isOwnerMsg(sock, msg, sender) && AI.enabled() && (abuseAiOk || biharAiOk || adminAiOk)) {
+      queueAiAbuseCheck(sock, msg, chatId, sender, idKey, text, { abuse: abuseAiOk, bihar: biharAiOk, admin: adminAiOk, adminText: adminTextOk }); // await NAHI — pipeline tez rahe
     }
 
     // ---- hook: savage names (Mia Khalifa / Johnny Sins -> delete + savage reply) ----
@@ -1054,6 +1149,7 @@ async function startSock() {
           store.aiMahtabOn = new Set(await KV.loadSet('settings:aiMahtabOn'));
           store.aiAbuseOff = new Set(await KV.loadSet('settings:aiAbuseOff'));
           store.biharOff = new Set(await KV.loadSet('settings:biharOff'));
+          store.adminGuardOff = new Set(await KV.loadSet('settings:adminGuardOff'));
           const lm = await KV.loadLidMap();
           console.log(`🛡️ Guard settings loaded: night=${store.nightOn.size}, engage=${store.engageOn.size}, antiforward=${store.antiforwardOn.size} group(s), botoff=${store.botOffChats.size} group(s), LID mapping=${lm}`);
           console.log(AI.enabled() ? '🤖 AI features: ON (Gemini) — YouTube quiz + update alerts chalenge' : '🤖 AI features: OFF (GEMINI_API_KEY nahi hai) — quiz bank se chalega, update alerts band');
