@@ -328,7 +328,8 @@ const isOwnerMsg = (sock, msg, sender) => {
 // pad jati aur kuch stickers bina delete hue nikal jate the.
 // Ab: pehchan turant (sync hash), delete ka kaam background me PARALLEL
 // (ek saath max 6, lambay retry ke saath), warning 60s me 1 baar (spam-rok).
-const stickerWarnAt = new Map(); // `${chatId}:${sender}` -> aakhri warning ka time (60s me 1 warning)
+const stickerWarnAt = new Map(); // `${chatId}:${sender}` -> aakhri warning ka time (60s me 1 warning = 1 strike-episode)
+const stickerStrikes = new Map(); // `${chatId}:${sender}` -> { n, firstAt } (warning 24h tak rehti hai; 3rd strike = REMOVE — user ka niyam 2026-11-27)
 let stickerJobs = 0;
 const MAX_STICKER_JOBS = 6;
 
@@ -344,16 +345,41 @@ async function enforceStickerBan(sock, msg, chatId, sender, banned, knownHash) {
     const deleted = await H.deleteMessageForEveryone(sock, msg);
     if (deleted) {
       console.log(`🧩 banned sticker deleted: ${senderNum(sender)} in group`);
-      // Warning 60s me ek hi baar (user ka faisla): spam ke time warning rukegi,
-      // lekin DELETE har sticker ka hota rahega.
+      // Strike ladder (user ka niyam, 2026-11-27): DELETE har banned sticker ka
+      // hota rahega, lekin warning/strike 60s me ek hi baar gini jayegi — ek
+      // saath bheje gaye 4-5 sticker = EK strike (warna pehli warning dikhne se
+      // pehle hi banda 3 strike kha lega). Strike 1-2 = warning, 3rd strike =
+      // group se REMOVE. Warnings 24h tak rehti hain, pehle expire nahi hotin.
       const wk = chatId + ':' + sender;
       const now = Date.now();
       if (now - (stickerWarnAt.get(wk) || 0) > 60000) {
         stickerWarnAt.set(wk, now);
-        await sock.sendMessage(chatId, {
-          text: `🚫 @${senderNum(sender)} ye sticker is group me banned hai!`,
-          mentions: [sender],
-        }).catch(() => {});
+        let st = stickerStrikes.get(wk);
+        if (!st || now - st.firstAt > 24 * 60 * 60 * 1000) st = { n: 0, firstAt: now };
+        st.n += 1;
+        stickerStrikes.set(wk, st);
+        console.log(`🧩 sticker strike ${st.n}/3: ${senderNum(sender)}`);
+        if (st.n >= 3) {
+          await sock.sendMessage(chatId, {
+            text: `⛔ @${senderNum(sender)} tumne *3 baar banned sticker* bheja hai — group ke rules ke hisaab se tumhe group se *REMOVE* kiya ja raha hai.`,
+            mentions: [sender],
+          }).catch(() => {});
+          const removed = await sock.groupParticipantsUpdate(chatId, [sender], 'remove').then(() => true).catch(() => false);
+          if (removed) {
+            console.log(`⛔ sticker 3rd-strike REMOVE: ${senderNum(sender)}`);
+          } else {
+            await sock.sendMessage(chatId, {
+              text: `⚠️ @${senderNum(sender)} ko 3 baar banned sticker bhejne par remove karna tha, lekin bot is group me admin nahi hai. Koi admin inhe group se hata de.`,
+              mentions: [sender],
+            }).catch(() => {});
+            console.log(`⛔ sticker remove FAIL (bot admin nahi): ${senderNum(sender)}`);
+          }
+        } else {
+          await sock.sendMessage(chatId, {
+            text: `🚫 @${senderNum(sender)} ye sticker is group me banned hai! (Warning ${st.n}/3)${st.n === 2 ? '\n⚠️ Ye *aakhri warning* hai — ek aur baar banned sticker bheja to seedha group se *REMOVE* kar diye jaoge.' : ''}`,
+            mentions: [sender],
+          }).catch(() => {});
+        }
       }
     }
   } catch { /* ignore */ } finally {
