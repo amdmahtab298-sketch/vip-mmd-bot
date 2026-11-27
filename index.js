@@ -969,8 +969,10 @@ async function startSock() {
                 groupName: (md && md.subject) || 'Group',
                 memberNo: (md && md.participants && md.participants.length) || '',
               });
-              await sock.sendMessage(id, { image: card, caption: welcomeText, mentions: jids });
-              cardSent = true;
+              if (card) {
+                await sock.sendMessage(id, { image: card, caption: welcomeText, mentions: jids });
+                cardSent = true;
+              }
             } else {
               // Asli number kahin nahi mila — nakli LID number card par MAT chhaapo.
               // Text welcome jayega, usme tag member ke sahi naam ke saath dikhta hai.
